@@ -1,0 +1,32 @@
+# 编译产物
+/dist/
+/*.exe
+/*.pdb
+/*.obj
+
+# 本地测试 / 调试临时目录（截图、日志、测试配置都在里面）
+/_t/
+/testenv/
+
+# 面板运行期把日志和配置写在 %LOCALAPPDATA%\DshPanel 下，仓库里不该出现
+panel.log
+panel-state.log
+panel.config.ini
+browser-profile/
+
+# 过程草稿与截图，不随源码发布
+优化提示词.md
+重构交接.md
+面板效果.png
+panel-shot.png
+_shot.ps1
+DshPanelTest.cs
+DpiShot.cs
+_build-check.exe
+
+# 编辑器 / 系统杂物
+.vs/
+.idea/
+*.user
+Thumbs.db
+desktop.ini

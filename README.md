@@ -53,6 +53,8 @@ build-panel.cmd
 
 产物在 `dist\DshPanel.exe`，图标会自动拷到旁边。
 
+### 发给你的Agent，省心省力！
+
 ## 配置
 
 配置写在 `panel.config.ini`：优先用 exe 旁边那份（绿色版，拷走就带着设置）；exe 所在目录不可写（比如放进 `Program Files`）时自动退到 `%LOCALAPPDATA%\DshPanel`。首次运行会生成一份带注释的默认配置。

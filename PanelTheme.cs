@@ -117,6 +117,22 @@ namespace DshPanel
         public static Color LogFg  { get { return C(176, 224, 178); } }
         public static Color LogDim { get { return C(120, 136, 154); } }
 
+        // 把当前主题的全部颜色按固定顺序拍一张快照。切换主题时先拍「切换前」、切完再拍
+        // 「切换后」，两张表逐一配对就得到「旧色 → 新色」映射，用来就地重涂控件树
+        // （见 PanelUi.Retint）。顺序必须与下面这个数组一致，不要再随手调整。
+        public static Color[] Snapshot()
+        {
+            return new Color[]
+            {
+                Bg, Shell, Card, Panel2,
+                Text, SubText, Border, BorderSoft,
+                Accent, AccentDeep, AccentSoft, AccentText,
+                Ok, OkSoft, Warn, Danger, DangerSoft, Hover,
+                TitleBg, TitleText, TitleSub,
+                LogBg, LogFg, LogDim
+            };
+        }
+
         // ---- 字体缓存 ----
         // 【必须缓存】WinForms 的 Font 是 GDI+ 句柄：每次 OnPaint 里 new 一个，
         // 动画一跑（60fps）几秒钟就会把进程句柄打满然后整窗变黑。这里按

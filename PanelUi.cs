@@ -1175,33 +1175,42 @@ namespace DshPanel
 
         internal void ToggleTheme()
         {
+            // 【为什么不重建控件树】主题只是一组颜色。以前的做法是 Dispose 掉整棵树再
+            // BuildUi() + 二次 ScaleLayout()，在高 DPI 下会被缩放两遍（ScrollArea 的
+            // _content 还会再乘一次 S），实测连切几次就出现「卡片缩到一半、文字糊到
+            // 别处、背景透出桌面」——也就是用户看到的那个花屏。
+            // 改成就地换色：拿切换前后两套调色板做一张「旧色 → 新色」映射表，递归重涂
+            // 所有控件的 BackColor / ForeColor；自绘控件（卡片、导航、开关、图标）每次
+            // OnPaint 都现取 Theme.*，只要 Invalidate 就会用新色重画。
+            Color[] before = Theme.Snapshot();
             Theme.Dark = !Theme.Dark;
             _cfg.DarkTheme = Theme.Dark;
             _cfg.Save();
-            RebuildForTheme();
+            Color[] after = Theme.Snapshot();
+
+            var map = new Dictionary<Color, Color>();
+            for (int i = 0; i < before.Length && i < after.Length; i++)
+            {
+                if (!map.ContainsKey(before[i])) { map[before[i]] = after[i]; }
+            }
+
+            this.SuspendLayout();
+            Retint(this, map);
+            this.ResumeLayout(true);
+
+            this.Invalidate(true);
+            this.Update();
+            LogEvent("切换主题：" + (Theme.Dark ? "暗夜" : "明亮"));
         }
 
-        private void RebuildForTheme()
+        // 按「旧色 → 新色」映射就地重涂一棵控件树。两套主题里同色的角色（例如浅色下
+        // Card 和 Shell 都是白的）只保留第一次出现的映射，涂完仍是同一个颜色，无副作用。
+        private static void Retint(Control c, Dictionary<Color, Color> map)
         {
-            string keepLog = (_log == null) ? "" : _log.Text;
-            Anim.ClearAll();
-            this.SuspendLayout();
-            this.Controls.Clear();
-            this.BackColor = Theme.Border;
-            BuildUi();
-            // 【关键】BuildUi 是按 100% 逻辑坐标搭的界面；切换主题时窗体已经放大到 S 倍，
-            // 所以必须再走一遍 ScaleLayout + 把 ClientSize 也乘 S，否则整个界面会缩到左上角。
-            if (Theme.S > 0f && Theme.S != 1f)
-            {
-                ScaleLayout(this, Theme.S);
-                this.ClientSize = new Size(Theme.Px(W + 2), Theme.Px(H + 2));
-            }
-            if (_log != null) { _log.Text = keepLog; ScrollLogToEnd(); }
-            RefreshPluginList();
-            LayoutServiceControls();
-            LayoutLogPage();
-            UpdateUi(IsPortListening(Port));
-            this.ResumeLayout();
+            Color next;
+            if (c.BackColor.A != 0 && map.TryGetValue(c.BackColor, out next)) { c.BackColor = next; }
+            if (map.TryGetValue(c.ForeColor, out next)) { c.ForeColor = next; }
+            for (int i = 0; i < c.Controls.Count; i++) { Retint(c.Controls[i], map); }
         }
 
         // ---------------------------------------------------------- 插件

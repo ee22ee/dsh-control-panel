@@ -956,7 +956,7 @@ namespace DshPanel
             a.Controls.Add(line);
             y += 1 + gap3;
 
-            _lblAboutSign = MakeLabel("by deepseek 和大米饭｜她的主人 lqh", 11.5f, FontStyle.Bold, Theme.AccentText);
+            _lblAboutSign = MakeLabel("by deepseek 和大米饭｜提供白饭的主人 getingupdeer", 11.5f, FontStyle.Bold, Theme.AccentText);
             _lblAboutSign.AutoSize  = false;
             _lblAboutSign.TextAlign = ContentAlignment.MiddleCenter;
             _lblAboutSign.Location  = new Point(0, y);

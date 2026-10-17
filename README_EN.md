@@ -4,7 +4,7 @@
 
 **A Windows tray console for DeepSeek Harness.**
 
-[中文](README.md) · [Download](https://github.com/GETINGUPDEER/dsh-control-panel/releases/latest) · [Issues](https://github.com/GETINGUPDEER/dsh-control-panel/issues)
+[中文](README.md) · [Download](https://github.com/ee22ee/dsh-control-panel/releases/latest) · [Issues](https://github.com/ee22ee/dsh-control-panel/issues)
 
 </div>
 

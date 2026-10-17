@@ -4,7 +4,7 @@
 
 **给 DeepSeek Harness 用的 Windows 托盘控制台。**
 
-[English](README_EN.md) · [下载最新版](https://github.com/GETINGUPDEER/dsh-control-panel/releases/latest) · [反馈问题](https://github.com/GETINGUPDEER/dsh-control-panel/issues)
+[English](README_EN.md) · [下载最新版](https://github.com/ee22ee/dsh-control-panel/releases/latest) · [反馈问题](https://github.com/ee22ee/dsh-control-panel/issues)
 
 </div>
 

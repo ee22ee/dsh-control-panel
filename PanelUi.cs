@@ -1124,14 +1124,20 @@ namespace DshPanel
             }
         }
 
+        // 切页：**不做任何抓图动画，直接切可见性**。
+        //
+        // 原来的实现是「PrintWindow 抓旧页 → 抓新页 → 舞台交叉溶解」，代价是：
+        //   · 抓图在 UI 线程同步跑（200% 缩放整页软件重绘 ~85ms），点一下卡一下；
+        //   · 为了能抓到新页，必须 newPage.Visible = true + Refresh() 再 Visible = false，
+        //     真实窗口上这一抖就是用户看到的「页面突然变白/变黑」；
+        //   · 抓回来的 to 一旦是脏缓存或 false，溶解后半段就没内容可画，
+        //     舞台的 BackColor（浅色=白、深色黑）整片露出来。
+        // 现在 4 个页面在 BuildUi 时就全建好了，切页只是切 Visible，
+        // 配合窗口的 WS_EX_COMPOSITED（整窗一次合成），屏幕上只会出现完整的一帧。
         private void SwitchPage(int page)
         {
             if (_pageReady && page == _page) { return; }
             if (_fade != null) { _fade.FinishNow(); }        // 上一次没播完的先落地
-
-            Panel oldPage = CurrentPage();
-            int   oldIdx  = _page;
-            bool  animate = _pageReady && oldPage != null && _fade != null;
 
             _page = page;
             _navService.Selected  = (page == 0);
@@ -1141,34 +1147,7 @@ namespace DshPanel
             _pageReady = true;
             SyncWheelTarget();
 
-            Panel newPage = CurrentPage();
-            if (!animate || newPage == null || oldPage == newPage)
-            {
-                ShowCurrentOnly();
-                RefreshSnapAsync(_page, CurrentPage());
-                return;
-            }
-
-            // 交叉溶解：旧页向下淡出、新页从下方升到原位淡入（两张图都走缓存）
-            Bitmap from, to;
-            lock (_snapLock)
-            {
-                from = SnapOf(oldIdx, oldPage);
-                if (from == null)
-                {
-                    ShowCurrentOnly();
-                    return;
-                }
-                _fade.Prepare(from);             // 舞台先铺上旧页画面，肉眼无跳变
-                oldPage.Visible = false;
-                newPage.Visible = true;          // 舞台压在最上层，这一帧看不到，只为能抓图
-                newPage.Left    = 0;
-                newPage.Top     = 0;
-                newPage.Refresh();               // 先让它和子控件真画一遍，避免抓到半成品
-                to = SnapOf(page, newPage);
-                newPage.Visible = false;
-                _fade.Begin(to, 260, 190, Theme.Pxf(14f), Theme.Pxf(10f));
-            }
+            ShowCurrentOnly();
         }
 
         // ---------------------------------------------------------- 主题

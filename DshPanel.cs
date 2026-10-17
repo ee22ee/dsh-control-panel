@@ -307,13 +307,20 @@ namespace DshPanel
         // 无边框窗口（FormBorderStyle.None）默认不带 WS_MINIMIZEBOX，
         // 于是任务栏图标被点（面板本来就在最上层）时系统不知道该怎么收它 —— 表现就是「点了没反应」。
         // 补上 MINIMIZEBOX + SYSMENU，任务栏那套标准行为（点图标最小化/还原）才会生效。
+        //
+        // WS_EX_COMPOSITED（0x02000000）是「整窗原子合成」：窗口和它名下所有子窗口的绘制
+        // 先落到同一张离屏表面，等这一轮画完整了才一次性送上屏幕。WinForms 的
+        // DoubleBuffered / OptimizedDoubleBuffer 只管单个控件，兄弟控件之间照样是一个画完
+        // 再画下一个，于是会看到「内容区已经变白、左边导航还是黑的」「启动时控件一个个冒出来」。
+        // 只有把合成单位从「控件」提到「整窗」，屏幕上才只可能出现完整的一帧。
         protected override CreateParams CreateParams
         {
             get
             {
                 CreateParams cp = base.CreateParams;
-                cp.Style |= 0x00020000;   // WS_MINIMIZEBOX
-                cp.Style |= 0x00080000;   // WS_SYSMENU
+                cp.Style  |= 0x00020000;   // WS_MINIMIZEBOX
+                cp.Style  |= 0x00080000;   // WS_SYSMENU
+                cp.ExStyle |= 0x02000000;  // WS_EX_COMPOSITED
                 return cp;
             }
         }

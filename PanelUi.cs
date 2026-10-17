@@ -1173,15 +1173,41 @@ namespace DshPanel
 
         // ---------------------------------------------------------- 主题
 
+        [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessageW")]
+        private static extern IntPtr SendMessageRedraw(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool RedrawWindow(IntPtr hWnd, IntPtr lprcUpdate, IntPtr hrgnUpdate, uint flags);
+
+        private const int WM_SETREDRAW_CONST = 0x000B;
+
+        // 递归开关重绘。只在顶层窗口上发 WM_SETREDRAW 挡不住子控件：它们各自是独立
+        // 的 HWND，颜色一改就立刻把自己那一片重画出来了 —— 实测就会看到「内容区已经
+        // 变白、左边导航栏还是黑的」这种半新半旧的画面（用户截图里那块不同步的部分）。
+        // 所以整棵树统统先关掉，改完颜色再一起打开、统一刷一遍。
+        private static void SetRedrawDeep(Control c, bool on)
+        {
+            try
+            {
+                if (c != null && c.IsHandleCreated)
+                {
+                    SendMessageRedraw(c.Handle, WM_SETREDRAW_CONST, (IntPtr)(on ? 1 : 0), IntPtr.Zero);
+                }
+            }
+            catch { }
+            if (c == null) { return; }
+            for (int i = 0; i < c.Controls.Count; i++) { SetRedrawDeep(c.Controls[i], on); }
+        }
+
         internal void ToggleTheme()
         {
             // 【为什么不重建控件树】主题只是一组颜色。以前的做法是 Dispose 掉整棵树再
             // BuildUi() + 二次 ScaleLayout()，在高 DPI 下会被缩放两遍（ScrollArea 的
             // _content 还会再乘一次 S），实测连切几次就出现「卡片缩到一半、文字糊到
-            // 别处、背景透出桌面」——也就是用户看到的那个花屏。
+            // 别处、背景透出桌面」。
             // 改成就地换色：拿切换前后两套调色板做一张「旧色 → 新色」映射表，递归重涂
             // 所有控件的 BackColor / ForeColor；自绘控件（卡片、导航、开关、图标）每次
-            // OnPaint 都现取 Theme.*，只要 Invalidate 就会用新色重画。
+            // OnPaint 都现取 Theme.*，只要重绘就会用新色。
             Color[] before = Theme.Snapshot();
             Theme.Dark = !Theme.Dark;
             _cfg.DarkTheme = Theme.Dark;
@@ -1194,23 +1220,83 @@ namespace DshPanel
                 if (!map.ContainsKey(before[i])) { map[before[i]] = after[i]; }
             }
 
-            this.SuspendLayout();
-            Retint(this, map);
-            this.ResumeLayout(true);
+            // 【一次性换完，不许半新半旧】Retint 每改一个控件，那次 BackColor 变更都会
+            // 立刻触发一次重绘，于是屏幕上会先出现「卡片白了、导航还黑」的中间态，控件
+            // 越多闪得越明显。这里先用 WM_SETREDRAW 把整窗重绘关掉，颜色全部改完再
+            // 打开，最后用 RedrawWindow(UPDATENOW) 一次性画完 —— 屏幕上只剩「切换前」
+            // 和「切换后」两帧，看起来就是同步的。
+            const int  WM_SETREDRAW   = 0x000B;
+            const uint RDW_INVALIDATE = 0x0001;
+            const uint RDW_ERASE      = 0x0004;
+            const uint RDW_ALLCHILDREN = 0x0080;
+            const uint RDW_UPDATENOW  = 0x0100;
 
-            this.Invalidate(true);
-            this.Update();
-            LogEvent("切换主题：" + (Theme.Dark ? "暗夜" : "明亮"));
+            bool painting = IsHandleCreated && Visible;
+            System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
+            int touched = 0;
+            if (painting) { SetRedrawDeep(this, false); }
+            try
+            {
+                SuspendLayout();
+                touched = Retint(this, map);
+                ResumeLayout(true);
+            }
+            finally
+            {
+                if (painting)
+                {
+                    InvalidateDeep(this);
+                    SetRedrawDeep(this, true);
+                    RedrawWindow(Handle, IntPtr.Zero, IntPtr.Zero,
+                        RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+                }
+                else
+                {
+                    Invalidate(true);
+                }
+            }
+            sw.Stop();
+            LogEvent(string.Format("切换主题：{0}（重涂 {1} 个控件 / 耗时 {2} ms）",
+                Theme.Dark ? "暗夜" : "明亮", touched, sw.ElapsedMilliseconds));
         }
 
-        // 按「旧色 → 新色」映射就地重涂一棵控件树。两套主题里同色的角色（例如浅色下
-        // Card 和 Shell 都是白的）只保留第一次出现的映射，涂完仍是同一个颜色，无副作用。
-        private static void Retint(Control c, Dictionary<Color, Color> map)
+        // 按「旧色 → 新色」映射就地重涂一棵控件树。
+        // 【先收集、再涂色】涂色会触发 BackColorChanged，某些控件的处理里可能会动控件
+        // 集合；一边递归一边涂就有可能在半路抛异常、把后半棵树漏掉（实测表现是「标题栏
+        // 和右边卡片变白了，中间插件列表还是黑的」，正好是用户截图里那块不同步的区域）。
+        // 所以先把整棵树摊平成数组，再逐个涂，收集阶段就算有异常也不会漏涂。
+        private static int Retint(Control root, Dictionary<Color, Color> map)
         {
-            Color next;
-            if (c.BackColor.A != 0 && map.TryGetValue(c.BackColor, out next)) { c.BackColor = next; }
-            if (map.TryGetValue(c.ForeColor, out next)) { c.ForeColor = next; }
-            for (int i = 0; i < c.Controls.Count; i++) { Retint(c.Controls[i], map); }
+            var all = new List<Control>(512);
+            Collect(root, all);
+            int touched = 0;
+            for (int i = 0; i < all.Count; i++)
+            {
+                Control c = all[i];
+                if (c == null || c.IsDisposed) { continue; }
+                Color next;
+                try
+                {
+                    if (c.BackColor.A != 0 && map.TryGetValue(c.BackColor, out next)) { c.BackColor = next; touched++; }
+                    if (map.TryGetValue(c.ForeColor, out next)) { c.ForeColor = next; touched++; }
+                }
+                catch { }
+            }
+            return touched;
+        }
+
+        // 递归把每个控件（含容器）标成 invalid：RedrawWindow 的 RDW_INVALIDATE 只保证
+        // 自己这一层，自绘控件要靠这一步才会跟着重画。
+        private static void InvalidateDeep(Control c)
+        {
+            c.Invalidate(true);
+            for (int i = 0; i < c.Controls.Count; i++) { InvalidateDeep(c.Controls[i]); }
+        }
+
+        private static void Collect(Control c, List<Control> sink)
+        {
+            sink.Add(c);
+            for (int i = 0; i < c.Controls.Count; i++) { Collect(c.Controls[i], sink); }
         }
 
         // ---------------------------------------------------------- 插件

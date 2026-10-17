@@ -53,7 +53,9 @@ build-panel.cmd
 
 产物在 `dist\DshPanel.exe`，图标会自动拷到旁边。
 
-### 发给你的Agent，省心省力！
+### 或者——
+
+发给你的Agent，说：我要这个！
 
 ## 配置
 

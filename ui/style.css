@@ -1,0 +1,366 @@
+/* ==========================================================================
+   DeepSeek Harness 控制台 —— 配色与 WinForms 版 PanelTheme.cs 的 Pal 一一对应。
+   切主题只改 <html data-theme="light|dark">，所有颜色由 CSS 变量整体重算，
+   不存在「一半新一半旧」的中间态。
+   ========================================================================== */
+
+:root,
+:root[data-theme="dark"] {
+  --bg:          #1a1d22;
+  --shell:       #20242a;
+  --card:        #262a31;
+  --panel2:      #2e333b;
+  --text:        #e8ecf2;
+  --sub:         #8c96a5;
+  --border:      #373d46;
+  --border-soft: #2f343c;
+  --accent:      #5494f0;
+  --accent-deep: #3a76d6;
+  --accent-soft: #28374d;
+  --accent-text: #85b6ff;
+  --ok:          #3ec48c;
+  --ok-soft:     #203a30;
+  --warn:        #f0a850;
+  --danger:      #ec6464;
+  --danger-soft: #3e282c;
+  --hover:       #2c3139;
+  --log-bg:      #0f1114;
+  --log-fg:      #b0e0b2;
+  --log-dim:     #78889a;
+  --shadow:      0 1px 3px rgba(0,0,0,.35);
+}
+
+:root[data-theme="light"] {
+  --bg:          #edf0f6;
+  --shell:       #e7ebf2;
+  --card:        #ffffff;
+  --panel2:      #f5f8fc;
+  --text:        #212936;
+  --sub:         #788596;
+  --border:      #dfe5ee;
+  --border-soft: #ecf1f8;
+  --accent:      #2f6fe0;
+  --accent-deep: #215abe;
+  --accent-soft: #e8f1fe;
+  --accent-text: #2560c8;
+  --ok:          #169e6c;
+  --ok-soft:     #e2f6ed;
+  --warn:        #e28a2d;
+  --danger:      #d64646;
+  --danger-soft: #fdecec;
+  --hover:       #f3f6fb;
+  --log-bg:      #1a1d22;
+  --log-fg:      #b0e0b2;
+  --log-dim:     #78889a;
+  --shadow:      0 1px 3px rgba(20,30,50,.08);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.app { display: flex; height: 100%; }
+
+/* ───────── 左侧导航 ───────── */
+.nav {
+  width: 220px;
+  flex: 0 0 220px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  padding: 22px 14px 14px;
+  gap: 18px;
+}
+
+.brand { display: flex; align-items: center; gap: 12px; padding: 0 6px 14px; }
+.brand .ava { width: 56px; height: 56px; border-radius: 14px; flex: 0 0 auto; }
+.brand .name { font-size: 15px; font-weight: 700; letter-spacing: .2px; }
+.brand .sub  { font-size: 11px; color: var(--sub); margin-top: 2px; }
+.brand .ver  { opacity: .8; }
+
+.nav-list { display: flex; flex-direction: column; gap: 4px; }
+.nav .exit { margin-top: auto; }
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+  transition: background .12s ease;
+}
+.nav-item svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; opacity: .9; }
+.nav-item:hover { background: var(--hover); }
+.nav-item.active { background: var(--accent-soft); color: var(--accent-text); }
+.nav-item.active::before {
+  content: "";
+  position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--accent);
+}
+.nav-item.exit { color: var(--sub); }
+.nav-item.exit:hover { color: var(--danger); background: var(--danger-soft); }
+
+/* ───────── 内容区 ───────── */
+/* 外壳（标题栏 / 左侧导航 / 退出）是 WinForms 的，这里铺满整个客户区剩余部分 */
+.content {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 16px 14px 16px;
+  overflow: hidden;
+}
+
+.page { display: none; flex: 1 1 auto; min-width: 0; min-height: 0; width: 100%; gap: 14px; }
+.page.active { display: flex; }
+
+#page-service { min-width: 0; }
+.col-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.col-side { flex: 0 0 340px; min-width: 0; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+#page-settings { flex-direction: column; overflow-y: auto; overflow-x: hidden; min-height: 0; padding-right: 6px; }
+#page-settings::-webkit-scrollbar { width: 10px; }
+#page-settings::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+#page-log { min-height: 0; }
+#page-about { overflow: auto; }
+#page-about .card.center { margin: auto; }
+#page-about::-webkit-scrollbar { width: 10px; }
+#page-about::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+
+/* ───────── 卡片 ───────── */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+  flex: 0 0 auto;
+}
+.card.grow { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.card.col  { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.card.center { text-align: center; padding: 36px 34px 30px; max-width: min(560px, 100%); }
+
+.card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.card-head .ci { width: 16px; height: 16px; fill: none; stroke: var(--sub); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
+.card-head h2 { font-size: 14.5px; font-weight: 700; margin: 0; flex: 1 1 auto; }
+.head-btns { display: flex; gap: 8px; }
+
+/* ───────── 按钮 ───────── */
+.btn {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 8px;
+  height: 30px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.btn:hover { background: var(--hover); }
+.btn:active { transform: translateY(1px); }
+.btn.ghost { border-color: var(--accent); color: var(--accent-text); }
+.btn.ghost:hover { background: var(--accent-soft); }
+.btn.ghost.wide { flex: 1 1 auto; min-width: 0; justify-content: center; }
+.btn.primary { border: 0; background: var(--accent); color: #fff; font-weight: 600; }
+.btn.primary:hover { background: var(--accent-deep); }
+.btn.primary.big { height: 46px; font-size: 14px; border-radius: 10px; flex: 1 1 auto; }
+.btn.danger { border: 0; background: var(--danger); color: #fff; font-weight: 600; }
+.btn.danger:hover { filter: brightness(.94); }
+.btn.danger.big { height: 46px; font-size: 14px; border-radius: 10px; flex: 1 1 auto; }
+.btn.icon { width: 46px; height: 46px; padding: 0; border-radius: 10px; display: grid; place-items: center; flex: 0 0 auto; }
+.btn.icon svg { width: 20px; height: 20px; fill: none; stroke: var(--accent-text); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn[hidden] { display: none; }
+
+/* ───────── 服务页 ───────── */
+.sum { font-size: 12.5px; color: var(--sub); margin-bottom: 10px; }
+.sum.warn { color: var(--danger); }
+
+.plugin-list { flex: 1 1 auto; overflow-y: auto; min-height: 0; padding-right: 6px; }
+.plugin-list::-webkit-scrollbar { width: 10px; }
+.plugin-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+
+.prow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 8px;
+  border-radius: 8px;
+}
+.prow:hover { background: var(--hover); }
+.prow .pn { font-size: 13.5px; }
+.prow .pv { font-size: 11.5px; color: var(--sub); }
+.prow .sp { margin-left: auto; }
+.prow.locked .pn { opacity: .55; }
+.prow .tag {
+  font-size: 10.5px; color: var(--sub); border: 1px solid var(--border);
+  border-radius: 6px; padding: 1px 6px; margin-left: 8px;
+}
+
+.row-sp { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.state { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sub); display: inline-block; }
+.dot.on   { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.dot.busy { background: var(--warn); box-shadow: 0 0 0 3px rgba(240,168,80,.18); animation: blip .9s ease-in-out infinite; }
+@keyframes blip { 50% { opacity: .35; } }
+.port { font-size: 12.5px; color: var(--sub); }
+.url  { font-size: 12.5px; color: var(--sub); margin-bottom: 14px; word-break: break-all; }
+.btns { display: flex; gap: 10px; }
+.hint { font-size: 11.5px; color: var(--sub); margin-top: 12px; line-height: 1.5; }
+
+.kv { display: grid; grid-template-columns: 96px 1fr; row-gap: 11px; column-gap: 10px; font-size: 12.5px; }
+.kv .k { color: var(--sub); }
+.kv .v { text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kv .v.mono { font-size: 12px; }
+
+/* ───────── 设置页 ───────── */
+.row { display: flex; align-items: center; gap: 12px; min-height: 34px; }
+.row.gap { margin-top: 10px; }
+.row .lab { flex: 0 0 92px; color: var(--sub); font-size: 12.5px; }
+.path { flex: 1 1 auto; color: var(--danger); font-size: 13px; word-break: break-all; }
+.path.ok { color: var(--text); }
+.st { font-size: 12px; color: var(--danger); margin: 6px 0 2px; }
+.st.ok { color: var(--sub); }
+.hint2 { font-size: 11.5px; color: var(--sub); line-height: 1.5; }
+
+.srow {
+  display: flex; align-items: center; gap: 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.srow:first-of-type { border-top: 0; }
+.srow .t { font-size: 13.5px; }
+.srow .d { font-size: 11.5px; color: var(--sub); margin-top: 2px; line-height: 1.45; }
+.srow > div:first-child { flex: 1 1 auto; min-width: 0; }
+
+/* 开关 */
+.sw { flex: 0 0 auto; }
+.sw input { display: none; }
+.sw i {
+  display: block; width: 46px; height: 26px; border-radius: 13px;
+  background: var(--panel2); border: 1px solid var(--border);
+  position: relative; cursor: pointer; transition: background .16s ease, border-color .16s ease;
+}
+.sw i::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--sub); transition: transform .16s ease, background .16s ease;
+}
+.sw input:checked + i { background: var(--accent); border-color: var(--accent); }
+.sw input:checked + i::after { transform: translateX(20px); background: #fff; }
+.sw input:disabled + i { opacity: .45; cursor: default; }
+
+/* 分段控件 */
+.seg { display: inline-flex; background: var(--panel2); border-radius: 8px; padding: 3px; gap: 3px; }
+.seg button {
+  border: 0; background: transparent; color: var(--sub);
+  font: inherit; font-size: 12.5px; border-radius: 6px;
+  padding: 6px 16px; cursor: pointer; transition: background .12s ease, color .12s ease;
+}
+.seg button.active { background: var(--accent); color: #fff; }
+
+.inp {
+  width: 130px; height: 30px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--panel2);
+  color: var(--text); font: inherit; font-size: 13px; padding: 0 10px;
+  outline: none;
+}
+.inp:focus { border-color: var(--accent); }
+
+/* ───────── 日志页 ───────── */
+.log {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  background: var(--log-bg); border-radius: 10px;
+  padding: 12px 14px; margin-top: 2px;
+  font: 12px/1.65 "Cascadia Mono", "Consolas", monospace;
+  color: var(--log-fg);
+  white-space: pre-wrap; word-break: break-all;
+  user-select: text;
+}
+.log::-webkit-scrollbar { width: 10px; }
+.log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+
+/* ───────── 关于页 ───────── */
+.card.center .ava.big { width: 96px; height: 96px; border-radius: 22px; }
+.card.center h1 { font-size: 20px; margin: 16px 0 4px; }
+.ver-line { font-size: 12px; color: var(--sub); }
+.about-txt { font-size: 13px; color: var(--text); line-height: 1.8; margin: 18px 0 0; }
+.about-sign { font-size: 11.5px; color: var(--accent-text); margin: 14px 0 0; font-weight: 600; }
+.about-links { display: flex; gap: 10px; justify-content: center; margin-top: 22px; }
+
+/* ───────── toast ───────── */
+.toast {
+  position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 14px);
+  background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 18px; font-size: 12.5px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.28);
+  opacity: 0; pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease;
+  max-width: 76%;
+  text-align: center;
+}
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+/* ───────── 自绘下拉（默认浏览器） ─────────
+   原生 <select> 的展开列表是 Chromium 的顶层窗口：既不受面板边框裁剪，
+   也没法改样式（用户看到的是系统白底菜单，还跑到面板外面去了）。
+   所以整条下拉自己画：菜单是绝对定位的普通 div，跟着卡片走、样式统一。 */
+.pick { position: relative; flex: 1 1 auto; min-width: 0; }
+.pick .btn.ghost.wide { width: 100%; }
+.pick .caret {
+  width: 0; height: 0; margin-left: 8px;
+  border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-top: 5px solid currentColor; opacity: .8;
+}
+.pick .menu {
+  position: absolute; left: 0; right: 0; top: calc(100% + 6px);
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px;
+  z-index: 40;
+  max-height: 208px;
+  overflow-y: auto;
+  box-shadow: 0 10px 26px rgba(0,0,0,.34);
+}
+.pick .menu[hidden] { display: none; }
+.pick .mi {
+  display: block; width: 100%;
+  text-align: left;
+  padding: 8px 11px;
+  border: 0; border-radius: 6px;
+  background: transparent; color: var(--text);
+  font: inherit; font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pick .mi:hover { background: var(--hover); }
+.pick .mi.on { color: var(--accent-text); font-weight: 600; }
+.pick .mi.dim { color: var(--sub); }
+.pick .sep { height: 1px; margin: 4px 6px; background: var(--border); }

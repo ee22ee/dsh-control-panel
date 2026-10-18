@@ -209,6 +209,30 @@ namespace DshPanel
             CenterOnScreen();
             // 日志页一打开就有东西可看（不然新装的面板点「日志」是一片空白）
             AppendLog("[面板] 控制台已启动 · 端口 " + Port + " · 缩放 " + s.ToString("0.##") + "\r\n");
+
+            // WebView2 的初始化从这里开始（此时窗口句柄已建好）。
+            // 首帧就绪前先把窗口挪到屏幕外，就绪后再挪回居中位置 —— 这样启动过程
+            // 看不到「空白壳 → 网页内容」那一下跳变（用户反馈的「打开时短暂闪烁」）。
+            if (Host != null)
+            {
+                Host.Failed -= OnWebHostFailed;
+                Host.Failed += OnWebHostFailed;
+                Host.Loaded += delegate { BeginInvoke((MethodInvoker)delegate { ShowAfterFirstFrame(); }); };
+                Host.Start();
+                StartRevealGuard();          // 兜底：网页迟迟不就绪也要把窗口挪回屏幕
+                if (!_cfg.AutoTray) { this.Location = new Point(-32000, -32000); }
+            }
+        }
+
+        // 首帧就绪前窗口停在屏幕外，就绪后挪回居中位置再刷新一次。
+        // （不能靠 SetVisibleCore 拦截显示：窗口不显示就不会触发 Load，布局缩放也就跑不到。）
+        private void ShowAfterFirstFrame()
+        {
+            StopRevealGuard();
+            if (_cfg.AutoTray) { return; }
+            CenterOnScreen();
+            InvalidateDeep(this);
+            this.Refresh();
         }
 
         // 打开时严格居中：StartPosition.CenterScreen 只按「缩放前」的尺寸算过一次，
@@ -288,6 +312,8 @@ namespace DshPanel
             for (int i = 0; i < parent.Controls.Count; i++)
             {
                 Control c = parent.Controls[i];
+                // 【DPI】WebView2 宿主走和其它控件同一条路：Location/Size 都按缩放系数放大。
+                // （BoundsMode=UseRawPixels 时 WebView2 把 Bounds 当物理像素，正好等于放大后的值。）
                 c.Location = new Point((int)Math.Round(c.Left * s), (int)Math.Round(c.Top * s));
                 // 只有真正按内容自动撑开的 Label 才交给它自己算尺寸；
                 // 多行 TextBox 的 AutoSize 是摆设，必须显式缩放，否则日志框不会跟着变大。
@@ -386,6 +412,9 @@ namespace DshPanel
                 });
             }
 
+            // 界面由 WebView2 渲染：初始化在 OnLoad 里已经启动（那时句柄就绪、窗口还没显示）。
+            // 失败（多半是没装 WebView2 Runtime）由 OnWebHostFailed 兜底提示。
+
             // 第一次启动（或者 DSH 被挪走了）：找不到数据目录就当场说清楚，别让人对着一屏红字猜。
             if (!_cfg.DshConfigured)
             {
@@ -394,6 +423,30 @@ namespace DshPanel
                 if (tray) { return; }        // 已收进托盘就别弹窗打扰，用户点开面板会看到设置页提示
                 ShowDshGuide();
             }
+        }
+
+        // 首帧还没到之前窗口是不显示的：这里兜底 4 秒，万一网页始终不就绪也不能让面板一直隐身。
+        private System.Windows.Forms.Timer _revealGuard;
+
+        private void StartRevealGuard()
+        {
+            if (_revealGuard != null) { return; }
+            _revealGuard = new System.Windows.Forms.Timer();
+            _revealGuard.Interval = 4000;
+            _revealGuard.Tick += delegate
+            {
+                LogEvent("首帧超时：直接显示窗口（网页可能还在加载）");
+                ShowAfterFirstFrame();
+            };
+            _revealGuard.Start();
+        }
+
+        private void StopRevealGuard()
+        {
+            if (_revealGuard == null) { return; }
+            _revealGuard.Stop();
+            _revealGuard.Dispose();
+            _revealGuard = null;
         }
 
         // 引导新用户指定 DSH 目录：直接把面板切到设置页，弹窗只说「去点哪里」。
@@ -419,6 +472,45 @@ namespace DshPanel
                 "指到 DSH 的数据目录（里面应当有一个 profiles 文件夹）。\r\n\r\n" +
                 "如果你还没装过 DeepSeek Harness，先装好它，再回来点「重新自动探测」。",
                 "需要先指定 DSH 目录", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        // WebView2 起不来（多半是本机没装 WebView2 Runtime）：把新界面藏起来，
+        // 露出下面那套 WinForms 自绘界面，功能一个不少 —— 老用户也不会因为升级而打不开面板。
+        private void OnWebHostFailed(string reason)
+        {
+            try
+            {
+                LogEvent("WebView2 初始化失败：" + reason);
+                AppendLog("[面板] WebView2 初始化失败，已回退到旧界面：" + reason + "\r\n");
+
+                if (Host != null)
+                {
+                    Host.Visible = false;
+                    Host.Dispose();
+                    Host = null;
+                }
+
+                // 【顺序】先把新界面彻底撤掉、再弹窗、最后才亮出旧界面：
+                // 用户点「确定」之后才看到旧界面，才知道自己刚才用的是降级版。
+                if (!_cfg.AutoTray)
+                {
+                    string detail = reason == null ? "" : reason.Trim();
+                    if (detail.Length > 400) { detail = detail.Substring(0, 400) + "…"; }
+                    MessageBox.Show(this,
+                        "新版界面需要 Microsoft Edge WebView2 运行时，本机没能启动它。\r\n\r\n" +
+                        "点「确定」后会切回旧界面，功能不受影响。\r\n\r\n" +
+                        "失败原因：\r\n" + detail + "\r\n\r\n" +
+                        "想用新界面的话，装一次 WebView2 Runtime 再打开面板：\r\n" +
+                        "https://developer.microsoft.com/microsoft-edge/webview2/",
+                        "界面回退", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+
+                if (_content != null) { _content.Visible = true; }
+                InvalidateDeep(this);
+                this.Refresh();
+                ShowAfterFirstFrame();  // 回退到旧界面了，窗口必须立刻显示
+            }
+            catch { }
         }
 
         // 图标必须按尺寸取帧：new Icon(文件) 只拿到 ico 里的默认帧（通常 32×32），

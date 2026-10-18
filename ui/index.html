@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>DeepSeek Harness 控制台</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- 外壳（标题栏、左侧导航、退出）仍然是 WinForms 的；
+     这里只画内容区，通过 C# 推送的 {"t":"nav"} 消息切换显示哪个页面。 -->
+<main class="content">
+
+  <!-- ===== 服务页 ===== -->
+  <section class="page active" id="page-service">
+    <div class="col-main">
+      <div class="card grow">
+        <div class="card-head">
+          <svg class="ci" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+          <h2>服务列表 · 插件启停</h2>
+          <div class="head-btns">
+            <button class="btn ghost" id="btnAllNone">全不选</button>
+            <button class="btn ghost" id="btnReset">恢复默认</button>
+          </div>
+        </div>
+        <div class="sum" id="pluginSum">正在读取插件列表…</div>
+        <div class="plugin-list" id="pluginList"></div>
+      </div>
+    </div>
+
+    <div class="col-side">
+      <div class="card">
+        <div class="card-head">
+          <svg class="ci" viewBox="0 0 24 24"><path d="M8 5l10 7-10 7z"/></svg>
+          <h2>服务控制</h2>
+        </div>
+        <div class="row-sp">
+          <div class="state"><i class="dot" id="dot"></i><span id="stateText">已停止</span></div>
+          <div class="port" id="portLabel">端口 3080</div>
+        </div>
+        <div class="url" id="urlText">未运行 · 端口 3080</div>
+        <div class="btns" id="mainBtns">
+          <button class="btn primary big" id="btnMain">启动并打开 DSH</button>
+          <button class="btn icon" id="btnRestart" title="重启 DSH">
+            <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/></svg>
+          </button>
+          <button class="btn icon" id="btnWeb" title="打开网页">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2"/><ellipse cx="12" cy="12" rx="3.6" ry="8.6"/></svg>
+          </button>
+        </div>
+        <div class="hint" id="mainHint">启动后插件开关会自动锁定</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <svg class="ci" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          <h2>网络监听 / 设置信息</h2>
+        </div>
+        <div class="kv">
+          <div class="k">监听地址</div><div class="v" id="vAddr">—</div>
+          <div class="k">监听端口</div><div class="v" id="vPort">3080</div>
+          <div class="k">打开方式</div><div class="v" id="vMode">无地址栏独立窗口</div>
+          <div class="k">默认浏览器</div><div class="v" id="vBrowser">自动 · msedge</div>
+          <div class="k">已启用插件</div><div class="v" id="vPlugins">0 / 0</div>
+          <div class="k">服务 PID</div><div class="v" id="vPid">—</div>
+          <div class="k">启动脚本</div><div class="v mono" id="vSvcCmd">—</div>
+          <div class="k">工作目录</div><div class="v mono" id="vWorkDir">—</div>
+          <div class="k">服务日志</div><div class="v mono" id="vSvcLog">—</div>
+          <div class="k">面板日志</div><div class="v mono" id="vStateLog">—</div>
+          <div class="k">配置文件</div><div class="v mono" id="vCfg">panel.config.ini</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 设置页 ===== -->
+  <section class="page scroll" id="page-settings">
+    <div class="card">
+      <div class="card-head">
+        <svg class="ci" viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h5l2 2.5h8A1.5 1.5 0 0 1 21 10v8.5A1.5 1.5 0 0 1 19.5 20h-15A1.5 1.5 0 0 1 3 18.5z"/></svg>
+        <h2>DSH 目录</h2>
+      </div>
+      <div class="row">
+        <div class="lab">目录</div>
+        <div class="path" id="dshPath">—</div>
+        <button class="btn ghost" id="btnPickDsh">选择…</button>
+      </div>
+      <div class="st" id="dshState">—</div>
+      <div class="row gap">
+        <button class="btn ghost" id="btnProbeDsh">重新自动探测</button>
+        <span class="hint2">插件启停页读写的就是「目录 \ profiles \ web \ package.json」</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <svg class="ci" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/></svg>
+        <h2>常规</h2>
+      </div>
+      <div class="srow"><div><div class="t">开机自启</div><div class="d">登录 Windows 后自动打开这个控制面板</div></div><label class="sw"><input type="checkbox" id="swAutoStart"><i></i></label></div>
+      <div class="srow"><div><div class="t">启动服务后自动打开网页</div><div class="d">点「启动并打开 DSH」后自动拉起浏览器</div></div><label class="sw"><input type="checkbox" id="swOpenOnStart"><i></i></label></div>
+      <div class="srow"><div><div class="t">启动后自动最小化到托盘</div><div class="d">面板起来后直接收进通知区域，不打扰你</div></div><label class="sw"><input type="checkbox" id="swAutoTray"><i></i></label></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <svg class="ci" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2"/><ellipse cx="12" cy="12" rx="3.6" ry="8.6"/></svg>
+        <h2>网页打开方式</h2>
+      </div>
+      <div class="row">
+        <div class="lab">打开方式</div>
+        <div class="seg" id="segMode">
+          <button data-mode="tab">普通窗口</button>
+          <button data-mode="app">无地址栏独立窗口</button>
+        </div>
+      </div>
+      <div class="row">
+        <div class="lab">默认浏览器</div>
+        <div class="pick" id="pickBrowser">
+          <button class="btn ghost wide" id="btnPickBrowser"><span id="browserLabel">自动</span><i class="caret"></i></button>
+          <div class="menu" id="browserMenu" hidden></div>
+        </div>
+      </div>
+      <div class="hint2">独立窗口（无地址栏）需要 Chromium 系浏览器；选 Firefox 会自动降级为普通窗口。</div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <svg class="ci" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        <h2>服务行为</h2>
+      </div>
+      <div class="srow"><div><div class="t">关闭面板时一并停止 DSH 服务</div><div class="d">不开则关掉面板不影响正在运行的 DSH</div></div><label class="sw"><input type="checkbox" id="swStopOnClose"><i></i></label></div>
+      <div class="srow"><div><div class="t">服务意外停止时托盘气泡提示</div><div class="d">DSH 自己崩了或被外部杀掉时提醒你</div></div><label class="sw"><input type="checkbox" id="swNotifyCrash"><i></i></label></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <svg class="ci" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21"/></svg>
+        <h2>高级</h2>
+      </div>
+      <div class="row">
+        <div class="lab">服务端口</div>
+        <input class="inp" id="inpPort" value="3080">
+        <button class="btn ghost" id="btnSavePort">保存</button>
+        <span class="hint2">改动会在下次启动面板后生效</span>
+      </div>
+      <div class="srow"><div><div class="t">启动纯净 DSH</div><div class="d">插件出问题时，用官方默认插件集另起一个实例来排查</div></div><button class="btn ghost" id="btnClean">启动</button></div>
+      <div class="srow"><div><div class="t">开发者模式</div><div class="d">记录面板与服务状态，并每 20 秒写一次心跳</div></div><label class="sw"><input type="checkbox" id="swDev"><i></i></label></div>
+    </div>
+  </section>
+
+  <!-- ===== 日志页 ===== -->
+  <section class="page" id="page-log">
+    <div class="card col">
+      <div class="card-head">
+        <svg class="ci" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        <h2>运行日志</h2>
+        <div class="head-btns">
+          <button class="btn ghost" id="btnLogClear">清空</button>
+        </div>
+      </div>
+      <div class="log" id="logBox"></div>
+    </div>
+  </section>
+
+  <!-- ===== 关于页 ===== -->
+  <section class="page center-page" id="page-about">
+    <div class="card center">
+      <img class="ava big" src="avatar.png" alt="">
+      <h1>DeepSeek Harness 控制台</h1>
+      <div class="ver-line">Ver 0.2 · 蓝色大肥鱼</div>
+      <p class="about-txt">
+        给 DeepSeek Harness 套一个托盘外壳：一键启停服务、图形化开关插件、
+        面板日志与服务日志随手可查。
+      </p>
+      <p class="about-sign">by deepseek 和大米饭｜提供白饭的主人 getingupdeer</p>
+      <div class="about-links">
+        <button class="btn ghost" id="btnOpenRepo">GitHub 仓库</button>
+        <button class="btn ghost" id="btnDevTools">开发者工具</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

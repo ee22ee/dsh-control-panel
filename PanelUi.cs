@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
+using System.Text;
 using System.Windows.Forms;
 
 namespace DshPanel
@@ -16,7 +17,7 @@ namespace DshPanel
     // ==========================================================================
     public partial class PanelForm
     {
-        internal const string VerText = "0.1";
+        internal const string VerText = "0.2";
 
         // 外壳（不含 1px 外框）
         private const int W = 1000;
@@ -73,6 +74,9 @@ namespace DshPanel
         private float      _splitT;          // 0 = 单个大按钮，1 = 缩短并浮现两个图标
         private bool       _svcRunning;
         private bool       _svcStarting;
+
+        // ---- WebView2 内容区（新界面） ----
+        internal PanelHost Host;
         
 
         // ---- 插件列表 ----
@@ -412,6 +416,29 @@ namespace DshPanel
             _fade.Size     = new Size(_content.Width, _content.Height);
             _fade.Done    += delegate { ShowCurrentOnly(); RefreshSnapAsync(_page, CurrentPage()); };
             _content.Controls.Add(_fade);
+
+            // WebView2 内容区：铺满旧内容区、压在整个窗口的最上层。
+            // 【为什么挂到窗口而不是 _content】旧界面的 ShowCurrentOnly() 会对当前页调
+            // BringToFront()，一旦 Host 是 _content 的子控件就会被那一句顶到下面去
+            // （现象：WebView2 明明初始化成功、JS 已经发来 ready，屏幕上却还是旧界面）。
+            // 挂到 Form 层后，页面的 z-order 再折腾也盖不到它。
+            Host = new PanelHost();
+            Host.BackColor = Theme.Bg;          // 起来之前先铺当前主题底色，避免闪一下别的颜色
+            // 【DPI 关键】WebView2 的 BoundsMode 默认是 UseRawPixels（Bounds 即物理像素）。
+            // 这里 Location/Size 都给「逻辑值」，交给 ScaleLayout 统一乘 Theme.S，
+            // 放大后正好就是 WebView2 要的物理像素；再在 ApplyPhysicalBounds 里显式钉一遍。
+            Host.Location = new Point(NAV_W, TITLE_H);
+            Host.Size     = new Size(W - NAV_W, H - TITLE_H);
+            Host.MessageFromJs += OnWebMessage;
+            Host.Loaded        += delegate { PushAllToWeb(); };
+
+            _shell.Controls.Add(Host);
+            Host.BringToFront();
+
+            // 【只显示新界面】旧的自绘页面整棵隐藏：WebView2 起来之前这里是 Host 的纯色
+            // 背景（Theme.Bg），不会先闪一下旧界面再被盖住。初始化失败时由
+            // DshPanel.OnWebHostFailed 把 _content 重新显示回来当降级界面。
+            _content.Visible = false;
         }
 
         private Panel MakePage()
@@ -1037,6 +1064,7 @@ namespace DshPanel
                 p.Left = 0;
                 p.Top  = 0;
                 p.BringToFront();   // 提到舞台上面
+                if (Host != null) { Host.BringToFront(); }   // 新界面永远压在最上层
                 p.Refresh();        // 趁舞台还盖着，先把它真画出来，撤舞台时才不会闪一帧空的
             }
         }
@@ -1140,6 +1168,7 @@ namespace DshPanel
             if (_fade != null) { _fade.FinishNow(); }        // 上一次没播完的先落地
 
             _page = page;
+            LogEvent("切页 → " + page + "（Host 就绪=" + (Host != null && Host.IsReady) + "）");
             _navService.Selected  = (page == 0);
             _navSettings.Selected = (page == 1);
             _navLog.Selected      = (page == 2);
@@ -1148,6 +1177,7 @@ namespace DshPanel
             SyncWheelTarget();
 
             ShowCurrentOnly();
+            PushNavToWeb();
         }
 
         // ---------------------------------------------------------- 主题
@@ -1204,7 +1234,6 @@ namespace DshPanel
             // 越多闪得越明显。这里先用 WM_SETREDRAW 把整窗重绘关掉，颜色全部改完再
             // 打开，最后用 RedrawWindow(UPDATENOW) 一次性画完 —— 屏幕上只剩「切换前」
             // 和「切换后」两帧，看起来就是同步的。
-            const int  WM_SETREDRAW   = 0x000B;
             const uint RDW_INVALIDATE = 0x0001;
             const uint RDW_ERASE      = 0x0004;
             const uint RDW_ALLCHILDREN = 0x0080;
@@ -1688,6 +1717,7 @@ namespace DshPanel
             AppendLog("[面板] 默认浏览器：" + BrowserDisplayName() + "\r\n");
             LogEvent("默认浏览器改为 " + BrowserDisplayName());
             MarkPageDirty();
+            PushBrowsersToWeb();
         }
 
         private void PickBrowser()
@@ -1759,6 +1789,395 @@ namespace DshPanel
         private static string CfgPath
         {
             get { return SafeDir(Application.ExecutablePath) + "panel.config.ini"; }
+        }
+
+        // ======================================================================
+        //  C# ↔ 页面（WebView2）桥接
+        //
+        //  协议：每条消息都是 JSON，必须有 "t" 字段（type）。
+        //    C# → 页面：state / plugins / paths / log / toast / theme
+        //    页面 → C#：cmd（name=start|stop|restart|openWeb|toggleTheme|togglePlugin|setPort|pickDshHome）、nav
+        //
+        //  数据来源不变：仍然由 RefreshNetInfo()/RefreshPluginList() 这些既有逻辑算好，
+        //  这里只负责序列化推送。旧的 WinForms 界面照常刷新，两套并存便于随时回退。
+        // ======================================================================
+
+        internal void PushAllToWeb()
+        {
+            if (Host == null) { return; }
+            PushStateToWeb();
+            PushPathsToWeb();        // 先给目录状态：页面要用它判断插件列表能不能读
+            PushPluginsToWeb();
+            PushSettingsToWeb();
+            PushThemeToWeb();
+            PushNavToWeb();
+            PushBrowsersToWeb();
+        }
+
+        /// <summary>把可选浏览器列表推给网页，由页面自己画下拉（原生菜单会跑到面板外面）。</summary>
+        internal void PushBrowsersToWeb()
+        {
+            if (Host == null) { return; }
+            List<string[]> list = FindBrowsers();
+            StringBuilder sb = new StringBuilder(420);
+            sb.Append("{\"t\":\"browsers\",\"current\":\"").Append(Esc(BrowserDisplayName())).Append("\",\"list\":[");
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (i > 0) { sb.Append(','); }
+                sb.Append("{\"name\":\"").Append(Esc(list[i][0]))
+                  .Append("\",\"path\":\"").Append(Esc(list[i][1])).Append("\"}");
+            }
+            sb.Append("]}");
+            Host.Post(sb.ToString());
+        }
+
+        // 外壳的导航在 WinForms 侧，页面只负责「显示哪一页」
+        internal void PushNavToWeb()
+        {
+            if (Host == null) { return; }
+            string name = _page == 1 ? "settings" : _page == 2 ? "log" : _page == 3 ? "about" : "service";
+            Host.Post("{\"t\":\"nav\",\"page\":\"" + name + "\"}");
+        }
+
+        internal void PushSettingsToWeb()
+        {
+            if (Host == null) { return; }
+            StringBuilder sb = new StringBuilder(320);
+            sb.Append("{\"t\":\"settings\"");
+            sb.Append(",\"autoStart\":").Append(_cfg.AutoStart ? "true" : "false");
+            sb.Append(",\"openOnStart\":").Append(_cfg.AutoOpen ? "true" : "false");
+            sb.Append(",\"autoTray\":").Append(_cfg.AutoTray ? "true" : "false");
+            sb.Append(",\"stopOnClose\":").Append(_cfg.StopWithPanel ? "true" : "false");
+            sb.Append(",\"notifyCrash\":").Append(_cfg.BalloonOnStop ? "true" : "false");
+            sb.Append(",\"dev\":").Append(_cfg.DevMode ? "true" : "false");
+            sb.Append(",\"dark\":").Append(Theme.Dark ? "true" : "false");
+            sb.Append(",\"mode\":\"").Append(Esc(_cfg.BrowserMode)).Append('"');
+            sb.Append(",\"browser\":\"").Append(Esc(BrowserDisplayName())).Append('"');
+            sb.Append(",\"port\":").Append(Port);
+            sb.Append('}');
+            Host.Post(sb.ToString());
+        }
+
+        internal void PushStateToWeb()
+        {
+            if (Host == null) { return; }
+            bool running = IsPortListening(Port);
+            int  pid     = running ? FindPidOnPort(Port) : 0;
+
+            StringBuilder sb = new StringBuilder(320);
+            sb.Append("{\"t\":\"state\",\"running\":").Append(running ? "true" : "false");
+            sb.Append(",\"starting\":").Append(_starting ? "true" : "false");
+            sb.Append(",\"restarting\":").Append(_restarting ? "true" : "false");
+            sb.Append(",\"clean\":").Append(CleanMode ? "true" : "false");
+            sb.Append(",\"port\":").Append(Port);
+            sb.Append(",\"pid\":").Append(pid);
+            sb.Append(",\"mode\":\"").Append(Esc(_cfg.BrowserMode)).Append('"');
+            sb.Append(",\"browser\":\"").Append(Esc(BrowserDisplayName())).Append('"');
+            sb.Append(",\"url\":\"").Append(Esc(UrlBase)).Append('"');
+            sb.Append(",\"on\":").Append(CountEnabled());
+            sb.Append(",\"total\":").Append(_plugins.Count);
+            sb.Append(",\"dark\":").Append(Theme.Dark ? "true" : "false");
+            sb.Append('}');
+            Host.Post(sb.ToString());
+        }
+
+        internal void PushPluginsToWeb()
+        {
+            if (Host == null) { return; }
+            StringBuilder sb = new StringBuilder(64 + _plugins.Count * 64);
+            sb.Append("{\"t\":\"plugins\",\"list\":[");
+            for (int i = 0; i < _plugins.Count; i++)
+            {
+                PluginItem p = _plugins[i];
+                if (i > 0) { sb.Append(','); }
+                sb.Append("{\"n\":\"").Append(Esc(p.Name)).Append('"');
+                sb.Append(",\"d\":\"").Append(Esc(p.Display)).Append('"');
+                sb.Append(",\"v\":\"").Append(Esc(p.Version)).Append('"');
+                sb.Append(",\"on\":").Append(p.Enabled ? "true" : "false");
+                sb.Append(",\"lock\":").Append(p.Protected ? "true" : "false");
+                sb.Append('}');
+            }
+            sb.Append("]}");
+            Host.Post(sb.ToString());
+        }
+
+        internal void PushPathsToWeb()
+        {
+            if (Host == null) { return; }
+            StringBuilder sb = new StringBuilder(512);
+            sb.Append("{\"t\":\"paths\"");
+            sb.Append(",\"dshhome\":\"").Append(Esc(_cfg.DshHome)).Append('"');
+            sb.Append(",\"cfgok\":").Append(_cfg.DshConfigured ? "true" : "false");
+            sb.Append(",\"svccmd\":\"").Append(Esc(SvcCmd)).Append('"');
+            sb.Append(",\"workdir\":\"").Append(Esc(WorkDir)).Append('"');
+            sb.Append(",\"svclog\":\"").Append(Esc(LogFile)).Append('"');
+            sb.Append(",\"statelog\":\"").Append(Esc(StateLog)).Append('"');
+            sb.Append(",\"plugin\":\"").Append(Esc(PluginPath)).Append('"');
+            sb.Append('}');
+            Host.Post(sb.ToString());
+        }
+
+        internal void PushThemeToWeb()
+        {
+            if (Host == null) { return; }
+            Host.Post("{\"t\":\"theme\",\"dark\":" + (Theme.Dark ? "true" : "false") + "}");
+        }
+
+        internal void PushToastToWeb(string text)
+        {
+            if (Host == null) { return; }
+            Host.Post("{\"t\":\"toast\",\"msg\":\"" + Esc(text) + "\"}");
+        }
+
+        /// <summary>JSON 字符串转义（只处理必须的几类字符）。</summary>
+        internal static string Esc(string s)
+        {
+            if (s == null) { return ""; }
+            StringBuilder sb = new StringBuilder(s.Length + 8);
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                switch (c)
+                {
+                    case '"':  sb.Append("\\\""); break;
+                    case '\\': sb.Append("\\\\"); break;
+                    case '\r': sb.Append("\\r");  break;
+                    case '\n': sb.Append("\\n");  break;
+                    case '\t': sb.Append("\\t");  break;
+                    default:
+                        if (c < ' ') { sb.Append("\\u").Append(((int)c).ToString("x4")); }
+                        else { sb.Append(c); }
+                        break;
+                }
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>从页面来的原始 JSON 里取一个字符串字段（够用即可，不引 JSON 库）。</summary>
+        private static string JsStr(string json, string key)
+        {
+            if (json == null) { return ""; }
+            string k = "\"" + key + "\":\"";
+            int i = json.IndexOf(k, StringComparison.Ordinal);
+            if (i < 0) { return ""; }
+            i += k.Length;
+            StringBuilder sb = new StringBuilder();
+            while (i < json.Length)
+            {
+                char c = json[i];
+                if (c == '\\' && i + 1 < json.Length)
+                {
+                    char n = json[i + 1];
+                    if (n == 'n') { sb.Append('\n'); }
+                    else if (n == 'r') { sb.Append('\r'); }
+                    else if (n == 't') { sb.Append('\t'); }
+                    else { sb.Append(n); }
+                    i += 2;
+                    continue;
+                }
+                if (c == '"') { break; }
+                sb.Append(c);
+                i++;
+            }
+            return sb.ToString();
+        }
+
+        private static bool JsBool(string json, string key)
+        {
+            if (json == null) { return false; }
+            string k = "\"" + key + "\":";
+            int i = json.IndexOf(k, StringComparison.Ordinal);
+            if (i < 0) { return false; }
+            return json.IndexOf("true", i, StringComparison.Ordinal) == i + k.Length;
+        }
+
+        /// <summary>页面发来的消息。</summary>
+        private void OnWebMessage(string json)
+        {
+            LogEvent("页面消息：" + (json != null && json.Length > 120 ? json.Substring(0, 120) + "…" : json));
+
+            string t = JsStr(json, "t");
+            if (t == "ready")
+            {
+                // 页面的 ready 消息里带着 innerWidth/innerHeight/devicePixelRatio，
+                // 上面的「页面消息：」日志会原样记下来 —— DPI 200% 下 CSS px 与物理 px
+                // 差一倍，布局算错时这行就是最直接的线索。
+                PushAllToWeb();
+                Host.FlushPending();
+                LogEvent("WebView2 就绪（DPI：" + Host.DiagZoom + "）");
+                try
+                {
+                    Point sp = Host.PointToScreen(Point.Empty);
+                    LogEvent(string.Format("WebView2 宿主：Bounds={0} 屏幕原点={1},{2} 期望={3},{4} {5}x{6}",
+                        Host.Bounds, sp.X, sp.Y,
+                        Theme.Px(NAV_W), Theme.Px(TITLE_H),
+                        Theme.Px(W - NAV_W), Theme.Px(H - TITLE_H)));
+                }
+                catch { }
+                return;
+            }
+
+            if (t == "nav")
+            {
+                string page = JsStr(json, "page");
+                int n = 0;
+                if (page == "settings") { n = 1; }
+                else if (page == "log") { n = 2; }
+                else if (page == "about") { n = 3; }
+                SwitchPage(n);
+                return;
+            }
+
+            if (t != "cmd") { return; }
+
+            string name = JsStr(json, "name");
+            switch (name)
+            {
+                case "start":       if (!IsPortListening(Port)) { OpenDsh(); } else { PushStateToWeb(); } break;
+                case "stop":        if (IsPortListening(Port)) { ConfirmStop(); } break;
+                case "restart":     ConfirmRestart(); break;
+                case "openWeb":     OpenBrowser(); break;
+                case "toggleTheme": ToggleTheme(); PushThemeToWeb(); break;
+                case "togglePlugin":
+                    {
+                        string plugin = JsStr(json, "plugin");
+                        bool on = JsBool(json, "on");
+                        ApplyPluginToggle(plugin, on);
+                        break;
+                    }
+                case "setPort":
+                    {
+                        string v = JsStr(json, "value");
+                        int p;
+                        if (int.TryParse(v, out p) && p >= 1 && p <= 65535)
+                        {
+                            _cfg.Port = p;
+                            _cfg.Save();
+                            AppendLog("[面板] 端口已改为 " + p + "，重启面板后生效。\r\n");
+                            LogEvent("端口已改为 " + p);
+                            PushStateToWeb();
+                            PushToastToWeb("端口已保存为 " + p + "，重启面板后生效");
+                        }
+                        else { PushToastToWeb("端口必须是 1 ~ 65535 之间的整数"); }
+                        break;
+                    }
+                case "pickDshHome": PickDshHome(); PushPathsToWeb(); PushPluginsToWeb(); break;
+                case "probeDshHome": ProbeDshHomeAgain(); PushPathsToWeb(); PushPluginsToWeb(); break;
+                case "resetPlugins": ResetPlugins(); PushPluginsToWeb(); PushStateToWeb(); break;
+                case "pickBrowser": ShowBrowserMenu(); break;
+                case "setBrowser":  SetBrowser(JsStr(json, "value")); break;
+                case "pickBrowserFile": PickBrowser(); PushBrowsersToWeb(); break;
+                case "clean":       StartCleanDsh(); break;
+                case "exit":        Quit(); break;
+                case "openRepo":    OpenUrl("https://github.com/ee22ee/dsh-control-panel"); break;
+                case "setSetting":  ApplyWebSetting(JsStr(json, "key"), json); break;
+                case "devtools":    if (Host != null) { Host.OpenDevTools(); } break;
+            }
+        }
+
+        /// <summary>页面里改设置项。key 见 ui/app.js 的 swMap。</summary>
+        private void ApplyWebSetting(string key, string json)
+        {
+            if (key == "mode")
+            {
+                string mode = JsStr(json, "value");
+                _cfg.BrowserMode = (mode == "tab") ? "tab" : "app";
+                _cfg.Save();
+                RefreshBrowserButton();
+                RefreshNetInfo();
+                MarkPageDirty();
+                LogEvent("打开方式改为 " + _cfg.BrowserMode);
+                PushSettingsToWeb();
+                PushStateToWeb();
+                return;
+            }
+
+            bool on = JsBool(json, "value");
+            string label = "";
+
+            switch (key)
+            {
+                case "autoStart":
+                    {
+                        string err;
+                        if (!AutoStart.Set(on, out err))
+                        {
+                            PushSettingsToWeb();            // 让页面开关弹回去
+                            PushToastToWeb("设置开机自启失败：" + err);
+                            LogEvent("设置开机自启失败：" + err);
+                            return;
+                        }
+                        _cfg.AutoStart = on;
+                        if (_swAutoStart != null) { _swAutoStart.SetCheckedSilent(on); }
+                        label = "开机自启已" + (on ? "开启" : "关闭");
+                        break;
+                    }
+                case "openOnStart":
+                    _cfg.AutoOpen = on;
+                    if (_swAutoOpen != null) { _swAutoOpen.SetCheckedSilent(on); }
+                    label = "启动后自动打开网页：" + (on ? "开" : "关");
+                    break;
+                case "autoTray":
+                    _cfg.AutoTray = on;
+                    if (_swAutoTray != null) { _swAutoTray.SetCheckedSilent(on); }
+                    label = "启动后最小化到托盘：" + (on ? "开" : "关");
+                    break;
+                case "stopOnClose":
+                    _cfg.StopWithPanel = on;
+                    if (_swStopWithPanel != null) { _swStopWithPanel.SetCheckedSilent(on); }
+                    label = "关闭面板时停止服务：" + (on ? "开" : "关");
+                    break;
+                case "notifyCrash":
+                    _cfg.BalloonOnStop = on;
+                    if (_swBalloon != null) { _swBalloon.SetCheckedSilent(on); }
+                    label = "服务停止气泡提示：" + (on ? "开" : "关");
+                    break;
+                case "dev":
+                    _cfg.DevMode = on;
+                    if (_swDevMode != null) { _swDevMode.SetCheckedSilent(on); }
+                    label = "开发者模式：" + (on ? "开" : "关");
+                    break;
+                default:
+                    return;
+            }
+
+            _cfg.Save();
+            LogEvent(label);
+            PushSettingsToWeb();
+            PushToastToWeb(label);
+        }
+
+        /// <summary>按包名改单个插件的启用状态（页面版）。</summary>
+        private void ApplyPluginToggle(string plugin, bool on)
+        {
+            if (plugin == null || plugin.Length == 0) { return; }
+            if (IsPortListening(Port) || _starting)
+            {
+                PushToastToWeb("服务运行中，插件开关已锁定；改动需重启 DSH");
+                return;
+            }
+
+            PluginItem hit = null;
+            for (int i = 0; i < _plugins.Count; i++)
+            {
+                if (_plugins[i].Name == plugin) { hit = _plugins[i]; break; }
+            }
+            if (hit == null) { return; }
+            if (hit.Protected) { PushToastToWeb(hit.Display + " 是 DSH 核心插件，不能停用"); return; }
+            if (hit.Enabled == on) { return; }
+
+            hit.Enabled = on;
+            string err;
+            if (!PluginStore.Save(PluginPath, _plugins, out err))
+            {
+                PushToastToWeb("写入 package.json 失败：" + err);
+                return;
+            }
+            LogEvent("插件 " + plugin + " → " + (on ? "启用" : "停用"));
+            RefreshPluginList();
+            PushPluginsToWeb();
+            PushStateToWeb();
+            PushToastToWeb(on ? ("已启用 " + hit.Display) : ("已停用 " + hit.Display));
         }
     }
 

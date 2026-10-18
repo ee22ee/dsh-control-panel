@@ -12,9 +12,14 @@
 
 功能：启停服务、打开网页、勾选插件、看日志、改端口。
 
-- **绿色单文件**：单 exe，无安装、无运行时、无依赖。放在哪都能跑，拷走就带着自己的配置。
+- **界面是网页渲染的**：v0.2 起内页改用 WebView2（HTML/CSS/JS 全嵌在 exe 里，不落盘），配色、字体、动效都按现代控制台做。
+- **绿色**：解压即用，无安装程序；配置跟着 exe 走，拷走就带着自己的设置。
 - **托盘常驻**：收进托盘，左键唤出面板，右键直接启停。
 - **高 DPI**：125% / 150% / 200% 支持缩放。
+
+> v0.2 起需要 **Microsoft Edge WebView2 Runtime**：Windows 11 自带；Windows 10 如果装过新版 Edge 就已经有了，
+> 否则从 <https://developer.microsoft.com/microsoft-edge/webview2/> 装一次 Evergreen Runtime。
+> 没装也能启动——面板会提示原因，并自动回退到 v0.1 的自绘界面。
 
 ## 能做什么
 
@@ -30,7 +35,9 @@
 ### 直接用
 
 1. 先装好 DeepSeek Harness。装好后 `%USERPROFILE%\.dsh\profiles\web` 应该存在。
-2. 把 `DshPanel.exe` 和 `DeepSeekHarness-WhaleGirl.ico` **放在同一个文件夹**，双击 exe。
+2. 把 `DshPanel.exe`、`DeepSeekHarness-WhaleGirl.ico` 和 3 个 WebView2 dll
+   （`Microsoft.Web.WebView2.Core.dll`、`Microsoft.Web.WebView2.WinForms.dll`、`WebView2Loader.dll`）
+   **放在同一个文件夹**，双击 exe。
 3. 第一次启动会自己去两个地方找 DSH 数据目录：
    - 环境变量 `DSH_HOME`
    - `%USERPROFILE%\.dsh`
@@ -42,13 +49,15 @@
 
 ### 从源码编译
 
-需要 Windows 自带的 .NET Framework 4.x（`csc.exe` 在 `C:\WINDOWS\Microsoft.NET\Framework64\v4.0.30319\`），无其它依赖。
+需要 Windows 自带的 .NET Framework 4.x（`csc.exe` 在 `C:\WINDOWS\Microsoft.NET\Framework64\v4.0.30319\`）。
+WebView2 SDK 已经放在 `lib\` 里，不用另外装 NuGet。
 
 ```bat
 build-panel.cmd
 ```
 
-产物在 `dist\DshPanel.exe`，图标会自动拷到旁边。
+产物在 `dist\DshPanel.exe`，图标和 3 个 WebView2 dll 会自动拷到旁边。
+界面资源在 `ui\`（`index.html` / `style.css` / `app.js` / `avatar.png`），编译时用 `/resource:` 嵌进 exe。
 
 ### 或者——
 
@@ -94,13 +103,19 @@ build-panel.cmd
 ## 项目结构
 
 ```
-DshPanel.cs        主窗口、托盘、服务启停、配置读写
-PanelUi.cs         界面布局、四个页面、设置项
-PanelTheme.cs      自绘控件：圆角卡片、按钮、开关、滚动区、图标
+DshPanel.cs        主窗口、托盘、服务启停、配置读写、DPI 缩放
+PanelUi.cs         外壳布局（标题栏/导航/旧内页）+ 数据推送到网页、把网页的点击派回业务逻辑
+PanelHost.cs       WebView2 宿主：初始化、内嵌资源拦截、JS 双向通信
+PanelTheme.cs      自绘控件与配色（v0.2 起只服务外壳层）
 PanelPlugins.cs    插件清单读写
 PanelExtra.cs      小工具
+ui/index.html      界面本体：服务 / 设置 / 日志 / 关于 四页
+ui/style.css       深色 / 浅色两套 CSS 变量
+ui/app.js          收 C# 推来的 JSON 渲染，点击发 JSON 回去
+lib/               WebView2 SDK（编译用，建包时拷到 exe 旁边）
 app.manifest       高 DPI 声明
-build-panel.cmd    一键编译
+build-panel.cmd    一键编译 + 安装到 dist\
+docs/preview.png   README 里的界面预览图
 ```
 
 ## 鸣谢

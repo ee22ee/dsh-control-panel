@@ -308,11 +308,10 @@ namespace DshPanel
         // 于是任务栏图标被点（面板本来就在最上层）时系统不知道该怎么收它 —— 表现就是「点了没反应」。
         // 补上 MINIMIZEBOX + SYSMENU，任务栏那套标准行为（点图标最小化/还原）才会生效。
         //
-        // WS_EX_COMPOSITED（0x02000000）是「整窗原子合成」：窗口和它名下所有子窗口的绘制
-        // 先落到同一张离屏表面，等这一轮画完整了才一次性送上屏幕。WinForms 的
-        // DoubleBuffered / OptimizedDoubleBuffer 只管单个控件，兄弟控件之间照样是一个画完
-        // 再画下一个，于是会看到「内容区已经变白、左边导航还是黑的」「启动时控件一个个冒出来」。
-        // 只有把合成单位从「控件」提到「整窗」，屏幕上才只可能出现完整的一帧。
+        // 【别再打开 WS_EX_COMPOSITED】试过：它确实能让重绘「整窗一帧」，但代价是窗口
+        // 在控件还没画完时就被 DWM 拿去合成，启动那一瞬间大片区域是透明的 ——
+        // 用户看到的是「打开面板只渲染一部分、后面的窗口直接透出来」。启动完整性靠
+        // OnLoad 里一次算好 DPI + CenterOnScreen + Refresh 就够了，不需要它。
         protected override CreateParams CreateParams
         {
             get
@@ -320,7 +319,6 @@ namespace DshPanel
                 CreateParams cp = base.CreateParams;
                 cp.Style  |= 0x00020000;   // WS_MINIMIZEBOX
                 cp.Style  |= 0x00080000;   // WS_SYSMENU
-                cp.ExStyle |= 0x02000000;  // WS_EX_COMPOSITED
                 return cp;
             }
         }
@@ -329,8 +327,7 @@ namespace DshPanel
         {
             this.AutoScaleDimensions = new SizeF(96F, 96F);
             this.AutoScaleMode       = AutoScaleMode.None;
-            this.Text                = AppTitle;
-            // 【无边框】标题栏、主题/最小化/关闭按钮全部自绘（参考 302 布局）。
+            this.Text                = AppTitle;            // 【无边框】标题栏、主题/最小化/关闭按钮全部自绘（参考 302 布局）。
             // 因此最大化按钮这件事交给自绘按钮管，系统边框一概不要。
             this.FormBorderStyle     = FormBorderStyle.None;
             this.MaximizeBox         = false;
@@ -370,6 +367,23 @@ namespace DshPanel
             {
                 HideToTray();
                 AppendLog("[面板] 已按设置自动最小化到托盘。\r\n");
+            }
+            else
+            {
+                // 【启动后补一次整树重绘】
+                // 窗口从「句柄建好」到「所有子控件都画过一遍」之间会显示出一帧半成品，
+                // 而且有些控件（滚动区、卡片阴影这类自绘的）在那之后不会自己补画 ——
+                // 用户看到的就是「打开面板只渲染了一部分，切一下主题才全」。
+                // 这里在消息队列空下来之后强制整棵树重画一次，确保看到的一定是完整界面。
+                this.BeginInvoke((MethodInvoker)delegate
+                {
+                    try
+                    {
+                        InvalidateDeep(this);
+                        this.Refresh();
+                    }
+                    catch { }
+                });
             }
 
             // 第一次启动（或者 DSH 被挪走了）：找不到数据目录就当场说清楚，别让人对着一屏红字猜。

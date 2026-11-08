@@ -828,6 +828,11 @@ internal sealed class ServiceController
     {
         var url = _tokenUrl;
 
+        // 兜底：内存里没有令牌就现场去日志里捞一次。
+        // 面板重启后 _tokenUrl 是空的，而服务早就打印过带令牌的地址；只靠 ScanLog 的增量读
+        // 永远碰不到那段历史，于是「打开网页」会一直等到 30 秒超时（本机实际踩到）。
+        if (string.IsNullOrEmpty(url)) { url = RecoverTokenFromLog(); }
+
         if (string.IsNullOrEmpty(url))
         {
             if (_openRetry < 20)
@@ -879,6 +884,46 @@ internal sealed class ServiceController
     /// 子进程（node）往管道写就会拿到 EPIPE 直接被杀 —— 表现是「服务莫名死掉」。
     /// 重定向到文件再用 FileShare.ReadWrite 增量读，彻底不碰管道。
     /// </summary>
+    /// <summary>
+    /// 从服务日志里现场捞一次带令牌的启动地址（取最后一个匹配，服务可能重启过多次）。
+    ///
+    /// 为什么需要它：`_tokenUrl` 只活在内存里，面板一重启就没了；而服务日志里的令牌行
+    /// 是**历史内容**，`ScanLog` 只读增量，永远读不到。没有这一步，「打开网页」会白等 30 秒。
+    /// </summary>
+    private string? RecoverTokenFromLog()
+    {
+        try
+        {
+            if (!File.Exists(_cfg.LogFile)) { return null; }
+
+            using var fs = new FileStream(_cfg.LogFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            if (fs.Length == 0) { return null; }
+
+            // 只读尾巴 2MB：令牌行通常在最近一次启动附近，没必要把整个日志拖进内存
+            var take = (int)Math.Min(2L * 1024 * 1024, fs.Length);
+            fs.Seek(-take, SeekOrigin.End);
+            var buf = new byte[take];
+            var n = fs.Read(buf, 0, take);
+            if (n <= 0) { return null; }
+
+            var text = Encoding.UTF8.GetString(buf, 0, n);
+            var m = Regex.Matches(text, @"https?://127\.0\.0\.1:" + _cfg.Port + @"[^\s""'<>]*");
+            if (m.Count == 0) { return null; }
+
+            var url = m[m.Count - 1].Value;
+            if (!url.Contains("token=", StringComparison.Ordinal)) { return null; }
+
+            _tokenUrl = url;
+            Program.LogEvent("从历史日志恢复带令牌的启动地址");
+            return url;
+        }
+        catch (Exception ex)
+        {
+            Program.LogEvent("从日志恢复令牌失败：" + ex.Message);
+            return null;
+        }
+    }
+
     private void ScanLog()
     {
         try
@@ -944,6 +989,18 @@ internal sealed class ServiceController
             // 丢可能被截断的首行
             var nl = text.IndexOf('\n');
             if (nl >= 0 && nl < text.Length - 1) { text = text[(nl + 1)..]; }
+
+            // 推历史之前先顺手捞一次令牌：服务早就跑起来的时候，令牌行就在这段尾巴里，
+            // 不捞的话后面 ScanLog 从文件末尾继续读，再也碰不到它。
+            if (string.IsNullOrEmpty(_tokenUrl))
+            {
+                var token = BrowserLauncher.CaptureTokenUrl(text, _cfg.Port);
+                if (!string.IsNullOrEmpty(token))
+                {
+                    _tokenUrl = token;
+                    Program.LogEvent("从历史日志恢复带令牌的启动地址");
+                }
+            }
 
             OnLogText?.Invoke(AnsiRegex.Replace(text, string.Empty));
             _logPos = fs.Length;   // 已把历史推过去，避免下一轮重复推

@@ -86,6 +86,8 @@ internal sealed class MainForm : Form
 
         // 服务日志增量 → 网页日志页
         _svc.OnLogText = text => _bridge.PushLog(text);
+        // 操作失败这类即时反馈走页面内 toast（不弹系统通知，也不占托盘气泡）
+        _svc.OnToast = msg => _bridge.PushToast(msg);
 
         // ---------- 5. 托盘 ----------
         _tray = new TrayManager(_cfg, _svc, ShowPanel, () => _bridge.PushNav("log"), QuitFromTray);

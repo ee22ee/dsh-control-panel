@@ -328,7 +328,7 @@ internal sealed class ServiceController
         if (closed == 0)
         {
             Program.LogEvent("没有找到可关闭的 DSH 网页窗口");
-            Balloon("没有找到网页窗口", "DSH 网页可能已经被关掉了。");
+            Toast("没有找到 DSH 网页窗口，可能已经关掉了");
         }
         else
         {
@@ -613,7 +613,7 @@ internal sealed class ServiceController
         {
             // 必须留痕：旧版这里只写窗口不写日志，于是「点了没反应」事后查不到原因
             Program.LogEvent($"停止 DSH 失败：端口 {_cfg.Port} 仍被占用（PID {pid}）");
-            Balloon("停止失败", $"端口 {_cfg.Port} 仍被占用，请稍后重试。");
+            Toast($"停止失败：端口 {_cfg.Port} 仍被占用，请稍后重试");
         }
 
         _onStateChanged();
@@ -847,8 +847,7 @@ internal sealed class ServiceController
             _pendingOpen = false;
             _openRetry = 0;
             Program.LogEvent("30 秒内未取到令牌地址，本次不打开网页");
-            Balloon("还没准备好",
-                $"服务尚未打印带令牌的地址，请稍后再点「打开网页 DSH」。");
+            Toast("还没拿到令牌地址，稍后再点「打开网页 DSH」");
             _onStateChanged();
             return;
         }
@@ -857,7 +856,7 @@ internal sealed class ServiceController
         _openRetry = 0;
 
         var (opened, isApp, detail) = _browser.Open(url);
-        if (!opened) { Balloon("打开网页失败", detail); }
+        if (!opened) { Toast("打开网页失败：" + detail); }
         if (opened && isApp) { _webOpenedByUs = true; }   // 只有独立窗口才给「关闭网页」按钮
         _onStateChanged();
     }
@@ -1027,15 +1026,30 @@ internal sealed class ServiceController
         }
     }
 
-    // ==================== 托盘气泡 ====================
+    // ==================== 托盘气泡 / 页面提示 ====================
 
     /// <summary>托盘气泡的可选回调，M6 由 TrayManager 注入。</summary>
     internal Action<string, string>? OnBalloon;
 
+    /// <summary>页面内 toast 的回调（由 UiBridge.PushToast 提供）。</summary>
+    internal Action<string>? OnToast;
+
+    /// <summary>
+    /// 托盘气泡：**只留给「服务意外停止」这类需要用户离开面板也知道的事件**。
+    /// 它受「服务意外停止时托盘气泡提示」开关控制，操作类反馈不该走这里
+    /// （打开网页失败、停止失败之类弹系统通知太吵，也不该被那个开关管）。
+    /// </summary>
     private void Balloon(string title, string text)
     {
         if (!_cfg.BalloonOnStop) { return; }
         try { OnBalloon?.Invoke(title, text); }
+        catch { }
+    }
+
+    /// <summary>页面内轻提示：不抢焦点、几秒自动消失，用于操作失败这类即时反馈。</summary>
+    private void Toast(string text)
+    {
+        try { OnToast?.Invoke(text); }
         catch { }
     }
 }

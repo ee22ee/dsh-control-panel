@@ -310,10 +310,20 @@ namespace DshPanel
             if (h != null) { h(json); }
         }
 
-        /// <summary>C# → 页面。调用方负责保证 json 是合法 JSON。</summary>
+        /// <summary>C# → 页面。调用方负责保证 json 是合法 JSON。后台线程也能直接调。</summary>
         public void Post(string json)
         {
-            if (!_ready || _wv == null || _wv.CoreWebView2 == null) { _pending = json; return; }
+            if (_wv == null) { return; }
+            // 必须先把线程换对，再去碰 CoreWebView2：
+            // WebView2 的 COM 对象有线程亲和性，后台线程（桌宠轮询、PATCH 回调）读 _wv.CoreWebView2
+            // 会抛 InvalidCastException（E_NOINTERFACE），不 catch 就是 AppDomain 未处理异常 → 整个面板进程退出。
+            if (_wv.InvokeRequired)
+            {
+                try { _wv.BeginInvoke((MethodInvoker)delegate { Post(json); }); }
+                catch { }
+                return;
+            }
+            if (!_ready || _wv.CoreWebView2 == null) { _pending = json; return; }
             try { _wv.CoreWebView2.PostWebMessageAsJson(json); }
             catch { }
         }

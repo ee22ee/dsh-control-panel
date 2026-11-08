@@ -2,129 +2,132 @@
 
 # DSH 控制面板 🐋
 
-**给 DeepSeek Harness 用的 Windows 托盘控制台。**
+**DeepSeek Harness 的 Windows 启动器与托盘控制台。**
 
-[English](README_EN.md) · [下载最新版](https://github.com/ee22ee/dsh-control-panel/releases/latest) · [反馈问题](https://github.com/ee22ee/dsh-control-panel/issues)
+`v2.0` · 单渲染面重写版
 
 </div>
 
-![界面预览](docs/preview.png)
+---
 
-功能：启停服务、打开网页、勾选插件、看日志、改端口。
+## 这是什么
 
-- **界面是网页渲染的**：v0.2 起内页改用 WebView2（HTML/CSS/JS 全嵌在 exe 里，不落盘），配色、字体、动效都按现代控制台做。
-- **绿色**：解压即用，无安装程序；配置跟着 exe 走，拷走就带着自己的设置。
-- **托盘常驻**：收进托盘，左键唤出面板，右键直接启停。
-- **高 DPI**：125% / 150% / 200% 支持缩放。
+DeepSeek Harness（DSH）是一个本地 Web 服务。这个面板负责把它拉起来、停下来、打开网页、
+开关插件、看日志——省掉每次手敲 `npx @deepseek-ai/dsh web --port 3080`。
 
-> v0.2 起需要 **Microsoft Edge WebView2 Runtime**：Windows 11 自带；Windows 10 如果装过新版 Edge 就已经有了，
-> 否则从 <https://developer.microsoft.com/microsoft-edge/webview2/> 装一次 Evergreen Runtime。
-> 没装也能启动——面板会提示原因，并自动回退到 v0.1 的自绘界面。
+## v2.0 是重写版
 
-## 能做什么
+v0.2 的外壳是 WinForms 自绘（标题栏、导航、卡片全是 GDI+ 画的），内页是 WebView2，
+两套渲染并存带来一串问题：主题切换半新半旧、滚动要装消息过滤器去截、切页靠截图做动画、
+高 DPI 下三套坐标系互相打架。
+
+v2.0 把外壳也搬进网页：**整个窗口只有一个 WebView2**，标题栏和导航由 HTML/CSS 绘制，
+WinForms 退化成无边框窗口容器。结果是：
+
+- 只有一条渲染路径、一套动画系统、一套坐标系
+- 切主题 = 改一个 CSS 变量，原子生效
+- 原生滚动、原生过渡
+- 服务管理、配置、插件、浏览器、托盘逻辑全部重写，逐条规避 v0.2 踩过的坑
+
+旧版本完整归档在 [`v1/`](v1/)——源码、文档、README 都在里面，随时可对照。
+
+## 功能
 
 | 页面 | 内容 |
-| --- | --- |
-| 服务 | 启动 / 停止 / 重启 DSH；无地址栏独立窗口打开 DSH；勾选启用哪些插件（改完下次启动生效）；实时显示端口、PID、监听状态 |
-| 设置 | DSH 目录、开机自启、启动后自动开网页、启动后最小化到托盘、浏览器打开方式、关闭面板时是否停服、端口、启动纯净 DSH、开发者模式；整页可滚动 |
-| 日志 | 实时刷新服务日志与面板日志，可清空、可折叠 |
-| 关于 | 版本与链接 |
+|---|---|
+| **服务** | 启动 / 停止 / 重启；无地址栏独立窗口打开 DSH；实时显示端口、PID、状态 |
+| **插件** | 读写 `profiles/web/package.json` 的 `bundles` 数组，开关在下次启动生效；命脉插件锁定不可关 |
+| **设置** | DSH 目录、开机自启、启动后自动开网页、关闭时收托盘 / 停服务、浏览器选择、端口、纯净 DSH、开发者模式 |
+| **日志** | 实时服务日志，可清空 |
 
-## 快速开始
+托盘：左键唤出面板，右键菜单可启停、重启、看日志、退出。
 
-### 直接用
+其他细节：
 
-1. 先装好 DeepSeek Harness。装好后 `%USERPROFILE%\.dsh\profiles\web` 应该存在。
-2. 把 `DshPanel.exe`、`DeepSeekHarness-WhaleGirl.ico` 和 3 个 WebView2 dll
-   （`Microsoft.Web.WebView2.Core.dll`、`Microsoft.Web.WebView2.WinForms.dll`、`WebView2Loader.dll`）
-   **放在同一个文件夹**，双击 exe。
-3. 第一次启动会自己去两个地方找 DSH 数据目录：
-   - 环境变量 `DSH_HOME`
-   - `%USERPROFILE%\.dsh`
+- **独立窗口**：`--app` 模式，无地址栏，带独立 `--user-data-dir`，不干扰日常浏览器
+- **令牌地址**：等 DSH 真正打印出带令牌的 URL 才打开，避免落到 401 页面
+- **插件清单是文本外科手术**：只替换 `bundles` 数组那一段，缩进、键序、注释都不动
+- **单实例**：重复启动会唤醒已有窗口，不会开出第二个进程
 
-   找到了直接可用。**没找到**会弹窗提醒，并自动跳到「设置 → DSH 目录」，点「选择…」指到你的 DSH 数据目录（里面应该有 `profiles` 文件夹）就行。
-4. 点「启动并打开 DSH」，服务起来后浏览器会打开 `http://127.0.0.1:3080`。
+## 系统要求
 
-注意：面板首次启动时**只找DSH安装时的默认位置**
+- Windows 10 / 11
+- .NET Desktop Runtime 10（`Microsoft.WindowsDesktop.App`）
+- Microsoft Edge WebView2 Runtime（Win11 自带；Win10 装过新版 Edge 就有了）
 
-### 从源码编译
+发布方式是 framework-dependent，exe 约 292 KB，不带运行时。
 
-需要 Windows 自带的 .NET Framework 4.x（`csc.exe` 在 `C:\WINDOWS\Microsoft.NET\Framework64\v4.0.30319\`）。
-WebView2 SDK 已经放在 `lib\` 里，不用另外装 NuGet。
+## 构建
 
-```bat
-build-panel.cmd
+```bash
+./build.sh              # 编译 Debug
+./build.sh release      # 发布到 dist/（framework-dependent）
+./build.sh selftest     # 编译并跑内置自检
 ```
 
-产物在 `dist\DshPanel.exe`，图标和 3 个 WebView2 dll 会自动拷到旁边。
-界面资源在 `ui\`（`index.html` / `style.css` / `app.js` / `avatar.png`），编译时用 `/resource:` 嵌进 exe。
+也可以直接用 dotnet：
 
-### 或者——
+```bash
+dotnet build
+dotnet publish -c Release -o dist
+```
 
-发给你的Agent，说：我要这个！
+### 内置自检
+
+不需要测试框架，纯逻辑都走程序内的断言：
+
+```bash
+DshPanel2.exe --selftest    # 结果写 selftest.log，退出码 0 = 全绿
+```
+
+覆盖 INI 解析与写回、插件 `bundles` 解析与保存防线、端口探活等。
 
 ## 配置
 
-配置写在 `panel.config.ini`：优先用 exe 旁边那份（绿色版，拷走就带着设置）；exe 所在目录不可写（比如放进 `Program Files`）时自动退到 `%LOCALAPPDATA%\DshPanel`。首次运行会生成一份带注释的默认配置。
+首次运行在 exe 同级生成 `panel.config.ini`（纯文本 `key = value`，`#` 或 `;` 开头是注释）。
+设置页的改动会自动写回，手改也有效。删掉整个文件会重新生成默认配置。
 
-| 键 | 说明 |
-| --- | --- |
-| `dshhome` | DSH 数据目录。留空 = 自动探测（先 `DSH_HOME`，再 `%USERPROFILE%\.dsh`） |
-| `port` | 服务端口，默认 `3080` |
-| `workdir` | 启动 DSH 时的工作目录，默认用户主目录 |
-| `pluginjson` | 插件清单路径。留空 = 跟着 `dshhome` 走 `profiles\web\package.json` |
-| `svccmd` | 启动脚本写到哪。留空 = 面板数据目录下的 `dsh-run.cmd` |
-| `browser` | `app` = 无地址栏独立窗口；`tab` = 系统默认浏览器标签页 |
-| `browserpath` / `browserprofile` | 指定浏览器 / 独立窗口用的 profile 目录，留空自动 |
-| `autostart` / `autoopen` / `autotray` | 开机自启 / 启动后开网页 / 启动后最小化到托盘 |
-| `stoponsvcclose` | 关闭面板时一并停止 DSH |
-| `darktheme` | 深色主题，默认开 |
-| `devmode` | 每 20 秒往日志写一次心跳，排查用 |
+配置文件位置按「绿色版优先」挑选：exe 同级 → 面板数据目录 → 当前目录。
 
-改完保存，重启面板生效。
-
-## 常见问题
-
-**提示「没有找到 DeepSeek Harness 的数据目录」**
-面板只认默认位置。到「设置 → DSH 目录」点「选择…」，指到 `%USERPROFILE%\.dsh`；装到别处的话指到你自己的 `DSH_HOME`。
-
-**启动失败：90 秒内未检测到端口监听**
-失败时面板会把服务日志的最后几行贴进面板日志，照着看。最常见的是端口被别的程序占了，换个 `port` 再试。
-
-**插件改完没生效**
-开关是写进 `package.json` 的，要重启 DSH 才生效。服务运行中开关是锁住的，先停再改。
-
-**更新 DSH 之后起不来了，是不是插件搞坏了**
-「设置 → 高级 → 启动纯净 DSH」用官方默认插件集另起一个实例排查，不动你原来的配置。
-
-**开机自启写在哪**
-当前用户的启动项（`HKCU`），不触发 UAC；设置里随时能关。
-
-## 项目结构
+## 目录
 
 ```
-DshPanel.cs        主窗口、托盘、服务启停、配置读写、DPI 缩放
-PanelUi.cs         外壳布局（标题栏/导航/旧内页）+ 数据推送到网页、把网页的点击派回业务逻辑
-PanelHost.cs       WebView2 宿主：初始化、内嵌资源拦截、JS 双向通信
-PanelTheme.cs      自绘控件与配色（v0.2 起只服务外壳层）
-PanelPlugins.cs    插件清单读写
-PanelExtra.cs      小工具
-ui/index.html      界面本体：服务 / 设置 / 日志 / 关于 四页
-ui/style.css       深色 / 浅色两套 CSS 变量
-ui/app.js          收 C# 推来的 JSON 渲染，点击发 JSON 回去
-lib/               WebView2 SDK（编译用，建包时拷到 exe 旁边）
-app.manifest       高 DPI 声明
-build-panel.cmd    一键编译 + 安装到 dist\
-docs/preview.png   README 里的界面预览图
+Program.cs            入口：DPI、单实例、异常兜底、日志
+Config.cs             路径探测（带回退链）+ INI 解析与写回
+ServiceController.cs  启停 / 三态端口探活 / 状态机去抖 / 日志增量
+PluginStore.cs        package.json 的 bundles 文本外科手术
+BrowserLauncher.cs    浏览器探测 / --app 独立窗口 / 令牌地址抓取 / 窗口检测
+TrayManager.cs        托盘图标（三级降级）与菜单
+WebHost.cs            WebView2 宿主 + 内嵌资源拦截 + 线程安全 Post
+UiBridge.cs           C# ↔ 网页的消息协议
+MainForm.cs           无边框窗口 + 首帧隐藏 + 错误页
+AutoStart.cs          开机自启（HKCU）
+SelfTest.cs           内置自检
+ui/                   界面（HTML/CSS/JS，编译时内嵌进 exe，不落盘）
+docs/                 设计记录与界面规格
+scripts/              验证工具（截图、CDP 调试、快捷方式）
+v1/                   旧版本归档
 ```
 
-## 鸣谢
+## 开发说明
 
-- 界面布局与配色参考了 [Steamcommunity 302](https://www.dogfight360.com/blog/18682/)（Dogfight360）的控制台式布局：左侧导航 + 右侧分栏卡片。
-- README 的组织方式参考了 [QCYTSN/dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu)。
-- 角色图标来自 [deepseek-whale-girl-icon](https://github.com/) 素材（如涉及授权问题请联系作者处理）。
-- 感谢 DeepSeek Harness 团队做出这么好用的 Agent 宿主。
+调界面时可以开远程调试端口：
+
+```bash
+DSH_PANEL_DEBUG=1 ./dist/DshPanel2.exe
+```
+
+然后用 `scripts/cdp.mjs` 直接查 DOM、点按钮、抓页面像素：
+
+```bash
+node scripts/cdp.mjs dom                    # 量所有元素矩形
+node scripts/cdp.mjs eval "innerWidth"      # 执行表达式
+node scripts/cdp.mjs click "#btnStart"      # 点击
+node scripts/cdp.mjs shot out.png           # 抓页面像素
+```
+
+比屏幕截图可靠：不受窗口位置、DPI 虚拟化、其它窗口遮挡影响。
 
 ## 许可
 
-MIT
+见 [LICENSE](LICENSE)。

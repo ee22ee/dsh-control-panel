@@ -1516,6 +1516,10 @@ namespace DshPanel
                 }
             }
 
+            // 网页端的状态全靠这条推送：不在这里发，按钮会一直停在「启动并打开 DSH」，
+            // 用户点了没反应就会以为面板没在工作。
+            PushStateToWeb();
+
             Anim.Add(this);
             LayoutServiceControls();
         }
@@ -1812,6 +1816,11 @@ namespace DshPanel
             PushThemeToWeb();
             PushNavToWeb();
             PushBrowsersToWeb();
+            PushPetHintToWeb();      // 这台机器上有没有桌宠：没有的话页面连卡片都不显示
+
+            // 网页刚加载完：把已经攒下的日志一次性补过去，否则日志页永远是空的
+            // （旧界面的 TextBox 一直在收，网页端只接增量，看不到历史）
+            if (_log != null && _log.TextLength > 0) { PushLogToWeb(_log.Text); }
         }
 
         /// <summary>把可选浏览器列表推给网页，由页面自己画下拉（原生菜单会跑到面板外面）。</summary>
@@ -1927,6 +1936,13 @@ namespace DshPanel
         {
             if (Host == null) { return; }
             Host.Post("{\"t\":\"toast\",\"msg\":\"" + Esc(text) + "\"}");
+        }
+
+        /// <summary>把一段日志追加到网页的日志框（网页版运行日志的唯一数据来源）。</summary>
+        internal void PushLogToWeb(string text)
+        {
+            if (Host == null || text == null || text.Length == 0) { return; }
+            Host.Post("{\"t\":\"log\",\"text\":\"" + Esc(text) + "\"}");
         }
 
         /// <summary>JSON 字符串转义（只处理必须的几类字符）。</summary>
@@ -2067,11 +2083,18 @@ namespace DshPanel
                 case "pickBrowser": ShowBrowserMenu(); break;
                 case "setBrowser":  SetBrowser(JsStr(json, "value")); break;
                 case "pickBrowserFile": PickBrowser(); PushBrowsersToWeb(); break;
+                case "clearLog":    if (_log != null) { _log.Clear(); } break;
                 case "clean":       StartCleanDsh(); break;
                 case "exit":        Quit(); break;
                 case "openRepo":    OpenUrl("https://github.com/ee22ee/dsh-control-panel"); break;
                 case "setSetting":  ApplyWebSetting(JsStr(json, "key"), json); break;
                 case "devtools":    if (Host != null) { Host.OpenDevTools(); } break;
+                // ---- 桌宠（dsh-pet）：请求全部由 C# 代发，见 PanelPet.cs ----
+                case "petPatch":    PetPatch(PetRawValue(json, "patch")); break;
+                case "petAction":   PetCommand(JsStr(json, "action")); break;
+                case "petReset":    PetResetConfig(); break;
+                case "petPickDir":  PetPickDir(); break;
+                case "petRefresh":  PetPoll(); break;
             }
         }
 

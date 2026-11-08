@@ -1,0 +1,82 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    DSH 启动面板 v1.0（重写版）
+
+    与旧 DshPanel（net48 + 手写 csc）的关系：
+      旧项目的 2638 行僵尸 UI、双轨渲染、WinForms 自绘控件库全部不再移植。
+      服务管理 / 配置 / 插件 / 浏览器 / 托盘逻辑逐行移植，坑随代码一起搬过来。
+
+    目标框架选 net10.0-windows：
+      - 本机已装 SDK 10.0.403 + Microsoft.WindowsDesktop.App 10.0.14
+      - .NET 8 于 2026-11-10 结束支持，不选
+      - framework-dependent 发布，不需要 70MB 自包含包
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <AssemblyName>DshPanel2</AssemblyName>
+    <RootNamespace>DshPanel2</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- 版本号：exe 属性、文件属性、关于页都从这里来 -->
+    <Version>2.0.0</Version>
+    <AssemblyVersion>2.0.0.0</AssemblyVersion>
+    <FileVersion>2.0.0.0</FileVersion>
+    <InformationalVersion>2.0.0</InformationalVersion>
+    <Product>DSH 控制面板</Product>
+    <Description>DeepSeek Harness 的 Windows 启动器与托盘控制台</Description>
+
+    <!--
+      必须显式指定：不设的话 exe 文件本身没有图标资源，
+      Windows 会给它套「空白文档」默认图标，任务栏与资源管理器里都很难看。
+      运行时窗口图标另由 Form.Icon 设置（见 TrayManager.LoadWindowIcon）。
+    -->
+    <ApplicationIcon>DeepSeekHarness-WhaleGirl.ico</ApplicationIcon>
+
+    <!-- 单文件部署时不把 ui/ 内嵌资源当独立文件拷出去 -->
+    <DebugType>embedded</DebugType>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- net10 用不了旧项目 lib/ 里那三个 net462 版的 dll，必须走 NuGet -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
+  </ItemGroup>
+
+  <!--
+    v1/ 是归档目录（旧版 net48 + 手写 csc 的源码），不参与本项目的编译。
+    SDK 默认会把 **/*.cs 全部包含进来，v1/AssemblyInfo.cs 里的程序集特性
+    会和自动生成的 DshPanel2.AssemblyInfo.cs 撞车（CS0579 特性重复）。
+  -->
+  <ItemGroup>
+    <Compile Remove="v1\**" />
+    <None Remove="v1\**" />
+    <EmbeddedResource Remove="v1\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 图标：既是 exe 的 win32 图标，也要拷到输出目录供托盘按尺寸取帧 -->
+    <None Include="DeepSeekHarness-WhaleGirl.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      前端资源内嵌进程序集，运行时由 WebHost 拦截 https://panel.local/* 提供。
+      LogicalName 规则：ui/index.html → ui.index.html（点号代替路径分隔符），
+      与旧 DshPanel 的 GetManifestResourceStream 命名保持一致，便于对照。
+    -->
+    <EmbeddedResource Include="ui\**\*">
+      <LogicalName>ui.%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

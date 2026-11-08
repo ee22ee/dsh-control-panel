@@ -1,9 +1,44 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
-  <assemblyIdentity version="1.0.0.0" name="DshPanel"/>
+  <assemblyIdentity version="1.0.0.0" name="DshPanel2" />
+
+  <!--
+    DPI 策略：PerMonitorV2。
+
+    旧面板用的是 dpiAware=true（仅 System 级），因为它的 WinForms 自绘控件树
+    必须自己把逻辑坐标换算成物理像素，而 DeviceDpi 在 .NET Framework 下恒返回 96
+    （坑 P1），于是写了 Theme.S / ScaleLayout / ApplyDpiZoom 一整套补偿代码，
+    结果三套坐标系叠加，出现过「界面放大两倍」「卡片缩到一半」等一连串问题（坑 P2/P3/P5）。
+
+    新架构里 WinForms 只有 Form 一个容器，唯一子控件是 Dock=Fill 的 WebView2：
+      - Form 客户区本身就是物理像素
+      - WebView2 的 BoundsMode 默认 UseRawPixels，按物理像素铺满父容器即可
+      - 网页的 CSS px ↔ 设备像素的换算由 WebView2 内部的 RasterizationScale 负责，
+        等于系统 DPI/96，页面会自动按 DPI 正确缩放
+    所以不要写任何 ScaleLayout，也不要碰 ZoomFactor——碰了就是双重放大。
+  -->
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
-      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
     </windowsSettings>
   </application>
+
+  <!-- Windows 10 / 11 -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+
+  <!-- 面板以普通用户权限运行：写 HKCU 启动项、读 %LOCALAPPDATA%，不需要提权 -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
 </assembly>

@@ -4,7 +4,7 @@ setlocal
 cd /d "%~dp0"
 
 set "CSC=C:\WINDOWS\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-set "SRC=AssemblyInfo.cs DshPanel.cs PanelTheme.cs PanelPlugins.cs PanelUi.cs PanelExtra.cs PanelHost.cs"
+set "SRC=AssemblyInfo.cs DshPanel.cs PanelTheme.cs PanelPlugins.cs PanelUi.cs PanelExtra.cs PanelHost.cs PanelPet.cs"
 set "MAN=app.manifest"
 set "OUTDIR=%~dp0dist"
 set "OUT=%OUTDIR%\DshPanel.exe"

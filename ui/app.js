@@ -1,430 +1,619 @@
 /* ==========================================================================
-   DeepSeek Harness 控制台 —— 页面脚本
-   C# 侧通过 PostWebMessageAsJson 推 JSON；这里用 chrome.webview.postMessage 回发。
-   约定：每条消息都有 t 字段。
+   DSH 控制面板 v1.0 前端
+
+   协议与旧版一致（见 docs/进度.md 第八节）。本节负责：
+     - 渲染 C# 推来的 state / settings / paths / plugins / browsers / theme / toast / log
+     - 把用户操作转成 {t:'cmd', name, ...} 发回去
+
+   三条刻意保留的旧版经验：
+     1. 点击启动后立刻「乐观置忙」，不等外壳回推 —— 否则一两秒内像没点到。
+     2. 回填设置时若输入框正在编辑，不覆盖它（否则 1.5 秒的 state 推送会把输入冲掉）。
+     3. 默认浏览器用自绘下拉，不用原生 <select> —— 原生菜单是顶层窗口，
+        既不受卡片裁剪也没法套主题，还会跑到面板外面去。
    ========================================================================== */
 
-(function () {
-  'use strict';
+const $ = (id) => document.getElementById(id);
+const bridge = window.chrome?.webview ?? null;
 
-  var wv = window.chrome && window.chrome.webview ? window.chrome.webview : null;
+let lastState = null;
+let editingPort = false;
 
-  function post(obj) {
-    if (wv) { wv.postMessage(obj); }
-    else { console.log('no webview bridge', obj); }
-  }
+// 「重启」的二次确认做在网页里：点 ⟳ 先展开成「确认重启」，再点才真正重启，不弹 MessageBox。
+let armedRestart = false;
+let armedAt = 0;
 
-  // ── 主题 ────────────────────────────────────────────────
-  function applyTheme(dark) {
-    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  }
+// 信息卡横跨四份推送（state / paths / plugins / browsers），各自到达时就地重绘
+const cache = { state: null, paths: null, plugins: null, browsers: null, settings: null };
 
-  // ── toast ───────────────────────────────────────────────
-  var toastEl = document.getElementById('toast');
-  var toastTimer = 0;
-  function toast(msg) {
-    toastEl.textContent = msg;
-    toastEl.classList.add('on');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { toastEl.classList.remove('on'); }, 2600);
-  }
+function post(obj) {
+  if (bridge) bridge.postMessage(obj);
+  else console.log('[no-bridge]', obj);
+}
 
-  // ── 页面切换 ─────────────────────────────────────────────
-  var navItems = Array.prototype.slice.call(document.querySelectorAll('.nav-item[data-page]'));
-  var pages = {
-    service:  document.getElementById('page-service'),
-    settings: document.getElementById('page-settings'),
-    log:      document.getElementById('page-log'),
-    about:    document.getElementById('page-about')
-  };
+function cmd(name, extra) {
+  post(Object.assign({ t: 'cmd', name }, extra || {}));
+}
 
-  function showPage(name) {
-    if (!pages[name]) { return; }
-    Object.keys(pages).forEach(function (k) {
-      pages[k].classList.toggle('active', k === name);
-    });
-    navItems.forEach(function (b) {
-      b.classList.toggle('active', b.dataset.page === name);
-    });
-  }
+function toast(msg) {
+  const el = $('toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 2600);
+}
 
-  navItems.forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      showPage(btn.dataset.page);
-      post({ t: 'nav', page: btn.dataset.page });
-    });
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+const baseName = (p) => {
+  const raw = String(p || '').replace(/[\\/]+$/, '');
+  const cut = Math.max(raw.lastIndexOf('\\'), raw.lastIndexOf('/'));
+  const name = cut >= 0 ? raw.slice(cut + 1) : raw;
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(0, dot) : name;
+};
+
+// 运行时的 url 带令牌（?token=...），信息卡里只留 origin
+const originOf = (url) => {
+  const s = String(url || '');
+  if (!s) return '';
+  const q = s.indexOf('?');
+  return q > 0 ? s.slice(0, q) : s;
+};
+
+/* ---------------- 标题栏 ---------------- */
+
+$('titlebar').addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  if (e.target.closest('button')) return;
+  cmd('drag');
+});
+
+$('btnMin').addEventListener('click', () => cmd('minimize'));
+$('btnClose').addEventListener('click', () => cmd('close'));
+$('btnTheme').addEventListener('click', () => cmd('toggleTheme'));
+
+/* ---------------- 导航 ---------------- */
+
+function switchPage(page) {
+  document.querySelectorAll('.nav').forEach((b) => {
+    b.classList.toggle('active', b.dataset.page === page);
   });
-
-  // ── 服务状态 ─────────────────────────────────────────────
-  var dot       = document.getElementById('dot');
-  var stateText = document.getElementById('stateText');
-  var portLabel = document.getElementById('portLabel');
-  var urlText   = document.getElementById('urlText');
-  var btnMain   = document.getElementById('btnMain');
-  var btnRestart= document.getElementById('btnRestart');
-  var btnWeb    = document.getElementById('btnWeb');
-  var mainHint  = document.getElementById('mainHint');
-  var vAddr = document.getElementById('vAddr');
-  var vPort = document.getElementById('vPort');
-  var vMode = document.getElementById('vMode');
-  var vBrowser = document.getElementById('vBrowser');
-  var vPlugins = document.getElementById('vPlugins');
-  var vPid = document.getElementById('vPid');
-  var vSvcCmd = document.getElementById('vSvcCmd');
-  var vWorkDir = document.getElementById('vWorkDir');
-  var vSvcLog = document.getElementById('vSvcLog');
-  var vStateLog = document.getElementById('vStateLog');
-  var vCfg = document.getElementById('vCfg');
-  var pluginSum = document.getElementById('pluginSum');
-  var pluginList = document.getElementById('pluginList');
-  var btnAllNone = document.getElementById('btnAllNone');
-  var btnReset = document.getElementById('btnReset');
-
-  var last = { running: false, starting: false, port: 3080, plugins: [], dshok: false };
-
-  function setState(s) {
-    last.running  = !!s.running;
-    last.starting = !!s.starting;
-    last.port     = s.port || last.port;
-    last.clean    = !!s.clean;
-
-    var busy = last.starting || !!s.restarting;
-    var running = last.running;
-
-    dot.className = 'dot' + (busy ? ' busy' : (running ? ' on' : ''));
-    stateText.textContent = busy ? (s.restarting ? '重启中…' : '启动中…')
-                          : (running ? (s.clean ? '运行中（纯净）' : '运行中') : '已停止');
-    portLabel.textContent = '端口 ' + last.port;
-
-    urlText.textContent = running ? (s.url || '') : ('未运行 · 端口 ' + last.port);
-
-    if (busy) {
-      btnMain.textContent = s.restarting ? '重启中…' : '启动中…';
-      btnMain.className = 'btn primary big';
-      btnMain.disabled = true;
-    } else if (running) {
-      btnMain.textContent = '停止 DSH';
-      btnMain.className = 'btn danger big';
-      btnMain.disabled = false;
-    } else {
-      btnMain.textContent = '启动并打开 DSH';
-      btnMain.className = 'btn primary big';
-      btnMain.disabled = false;
-    }
-    btnRestart.hidden = !running;
-    btnWeb.hidden = !running;
-    mainHint.textContent = running ? '服务运行中 · 插件开关已锁定，改动需重启服务'
-                                   : '启动后插件开关会自动锁定';
-
-    vAddr.textContent = running ? (s.url || '') : '(未监听)';
-    vPort.textContent = last.port;
-    vMode.textContent = s.mode === 'tab' ? '普通窗口' : '无地址栏独立窗口';
-    vBrowser.textContent = s.browser || '自动';
-    vPlugins.textContent = (s.on || 0) + ' / ' + (s.total || 0);
-    vPid.textContent = running && s.pid ? String(s.pid) : '—';
-
-    // 服务运行中，插件开关锁定
-    var locked = running || busy;
-    Array.prototype.forEach.call(pluginList.querySelectorAll('input'), function (inp) {
-      inp.disabled = locked || inp.dataset.protected === '1';
-    });
-    btnAllNone.disabled = locked;
-    btnReset.disabled = locked;
-  }
-
-  function renderPlugins(list) {
-    last.plugins = list || [];
-    last.gotPlugins = true;
-    pluginList.innerHTML = '';
-
-    if (!last.dshok) {
-      pluginSum.className = 'sum warn';
-      pluginSum.textContent = '还没有指定 DSH 目录，读不到插件列表 —— 请到「设置 → DSH 目录」里选一下。';
-      return;
-    }
-
-    var on = 0;
-    var frag = document.createDocumentFragment();
-    last.plugins.forEach(function (p) {
-      if (p.on) { on++; }
-      var row = document.createElement('div');
-      row.className = 'prow' + (p.lock ? ' locked' : '');
-
-      var n = document.createElement('span');
-      n.className = 'pn';
-      n.textContent = p.d || p.n;
-      n.title = p.n;
-      row.appendChild(n);
-
-      if (p.v) {
-        var v = document.createElement('span');
-        v.className = 'pv';
-        v.textContent = p.v;
-        row.appendChild(v);
-      }
-
-      if (p.lock) {
-        var tag = document.createElement('span');
-        tag.className = 'tag';
-        tag.textContent = '核心';
-        row.appendChild(tag);
-      }
-
-      var sp = document.createElement('label');
-      sp.className = 'sp sw';
-      var inp = document.createElement('input');
-      inp.type = 'checkbox';
-      inp.checked = !!p.on;
-      inp.dataset.name = p.n;
-      inp.dataset.protected = p.lock ? '1' : '0';
-      inp.disabled = (last.running || last.starting) || !!p.lock;
-      inp.addEventListener('change', function () {
-        post({ t: 'cmd', name: 'togglePlugin', plugin: p.n, on: inp.checked });
-      });
-      var i = document.createElement('i');
-      sp.appendChild(inp);
-      sp.appendChild(i);
-      row.appendChild(sp);
-
-      frag.appendChild(row);
-    });
-
-    pluginList.appendChild(frag);
-
-    pluginSum.className = 'sum';
-    pluginSum.textContent = '共 ' + last.plugins.length + ' 个已注册插件，启用 ' + on +
-                            ' 个 · 勾选后在下次启动 DSH 时生效';
-    btnAllNone.textContent = (on === last.plugins.length) ? '全不选' : '全选';
-  }
-
-  // ── 设置项 ───────────────────────────────────────────────
-  var swMap = {
-    autoStart:   document.getElementById('swAutoStart'),
-    openOnStart: document.getElementById('swOpenOnStart'),
-    autoTray:    document.getElementById('swAutoTray'),
-    stopOnClose: document.getElementById('swStopOnClose'),
-    notifyCrash: document.getElementById('swNotifyCrash'),
-    dev:         document.getElementById('swDev')
-  };
-
-  function setSettings(o) {
-    Object.keys(swMap).forEach(function (k) {
-      if (typeof o[k] === 'boolean') {
-        swMap[k].checked = o[k];
-        swMap[k].dataset.ready = '1';
-      }
-    });
-    if (typeof o.dark === 'boolean') { applyTheme(o.dark); }
-    if (o.mode) { markSeg(o.mode); }
-    if (o.browser) {
-      var bl = document.getElementById('browserLabel');
-      if (bl) { bl.textContent = o.browser; }
-    }
-    if (typeof o.port === 'number') { document.getElementById('inpPort').value = o.port; }
-  }
-
-  Object.keys(swMap).forEach(function (k) {
-    swMap[k].addEventListener('change', function () {
-      if (swMap[k].dataset.ready !== '1') { return; }
-      post({ t: 'cmd', name: 'setSetting', key: k, value: swMap[k].checked });
-    });
+  document.querySelectorAll('.page').forEach((p) => {
+    p.classList.toggle('active', p.id === 'page-' + page);
   });
+  // 每次切页从顶开始。设置页自己滚动，留着上次的位置会让人以为页面上半截没了。
+  const active = document.getElementById('page-' + page);
+  if (active) active.scrollTop = 0;
+  post({ t: 'nav', page });
+}
 
-  // ── 默认浏览器下拉（自绘，菜单不跑出面板） ──────────────
-  var browserState = { current: '', list: [] };
+document.querySelectorAll('.nav').forEach((b) => {
+  b.addEventListener('click', () => switchPage(b.dataset.page));
+});
 
-  function renderBrowsers(o) {
-    browserState.current = o.current || '';
-    browserState.list = o.list || [];
-    var label = document.getElementById('browserLabel');
-    if (label) { label.textContent = o.current ? o.current : '系统默认浏览器'; }
-
-    var menu = document.getElementById('browserMenu');
-    if (!menu) { return; }
-    menu.innerHTML = '';
-
-    var items = [{ name: '系统默认浏览器', path: '' }].concat(browserState.list);
-    items.forEach(function (b) {
-      var el = document.createElement('button');
-      el.className = 'mi' + (b.path === browserState.current ? ' on' : '');
-      el.textContent = b.name;
-      el.addEventListener('click', function () {
-        post({ t: 'cmd', name: 'setBrowser', value: b.path });
-        menu.hidden = true;
-      });
-      menu.appendChild(el);
-    });
-
-    var sep = document.createElement('div');
-    sep.className = 'sep';
-    menu.appendChild(sep);
-
-    var pick = document.createElement('button');
-    pick.className = 'mi dim';
-    pick.textContent = '选择其他程序…';
-    pick.addEventListener('click', function () {
-      post({ t: 'cmd', name: 'pickBrowserFile' });
-      menu.hidden = true;
-    });
-    menu.appendChild(pick);
-  }
-
-  var seg = document.getElementById('segMode');
-  function markSeg(mode) {
-    Array.prototype.forEach.call(seg.querySelectorAll('button'), function (b) {
-      b.classList.toggle('active', b.dataset.mode === mode);
-    });
-  }
-  seg.addEventListener('click', function (e) {
-    var b = e.target.closest('button');
-    if (!b) { return; }
-    markSeg(b.dataset.mode);
-    post({ t: 'cmd', name: 'setSetting', key: 'mode', value: b.dataset.mode });
-  });
-
-  // ── 路径信息 ─────────────────────────────────────────────
-  function setPaths(p) {
-    last.dshok = !!p.cfgok;
-    var pathEl = document.getElementById('dshPath');
-    var stEl   = document.getElementById('dshState');
-
-    if (p.cfgok) {
-      pathEl.className = 'path ok';
-      pathEl.textContent = p.dshhome || '—';
-      stEl.className = 'st ok';
-      stEl.textContent = '已找到 DeepSeek Harness 的数据目录。';
-    } else {
-      pathEl.className = 'path';
-      pathEl.textContent = p.dshhome || '（未指定）';
-      stEl.className = 'st';
-      stEl.textContent = p.dshhome
-        ? '这个目录不存在，或者不像 DSH 的数据目录（应当包含 profiles 子目录）。'
-        : '还没有指定 DSH 的数据目录。';
-    }
-
-    if (p.svccmd)   { vSvcCmd.textContent   = p.svccmd; }
-    if (p.workdir)  { vWorkDir.textContent  = p.workdir; }
-    if (p.svclog)   { vSvcLog.textContent   = p.svclog; }
-    if (p.statelog) { vStateLog.textContent = p.statelog; }
-
-    // paths 可能比 plugins 晚到：补一次渲染，否则会一直显示「还没有指定 DSH 目录」
-    if (last.gotPlugins) { renderPlugins(last.plugins); }
-  }
-
-  // ── 收到 C# 消息 ─────────────────────────────────────────
-  function onMessage(data) {
-    switch (data.t) {
-      case 'state':    setState(data); break;
-      case 'plugins':  renderPlugins(data.list); break;
-      case 'paths':    setPaths(data); break;
-      case 'settings': setSettings(data); break;
-      case 'theme':    applyTheme(!!data.dark); break;
-      case 'toast':    toast(data.msg || ''); break;
-      case 'log':      appendLog(data.text || ''); break;
-      case 'nav':      showPage(data.page); break;
-      case 'browsers': renderBrowsers(data); break;
-    }
-  }
-
-  if (wv) {
-    wv.addEventListener('message', function (e) { onMessage(e.data); });
-  }
-
-  // ── 按钮 ─────────────────────────────────────────────────
-  btnMain.addEventListener('click', function () {
-    post({ t: 'cmd', name: last.running ? 'stop' : 'start' });
-  });
-  btnRestart.addEventListener('click', function () { post({ t: 'cmd', name: 'restart' }); });
-  btnWeb.addEventListener('click', function () { post({ t: 'cmd', name: 'openWeb' }); });
-
-  btnAllNone.addEventListener('click', function () {
-    var allOn = last.plugins.length > 0 && last.plugins.every(function (p) { return p.on; });
-    var target = !allOn;
-    last.plugins.forEach(function (p) {
-      if (p.lock) { return; }
-      post({ t: 'cmd', name: 'togglePlugin', plugin: p.n, on: target });
-    });
-  });
-
-  btnReset.addEventListener('click', function () {
-    post({ t: 'cmd', name: 'resetPlugins' });
-  });
-
-  document.getElementById('btnPickDsh').addEventListener('click', function () {
-    post({ t: 'cmd', name: 'pickDshHome' });
-  });
-  document.getElementById('btnProbeDsh').addEventListener('click', function () {
-    post({ t: 'cmd', name: 'probeDshHome' });
-  });
-  document.getElementById('btnPickBrowser').addEventListener('click', function (e) {
-    e.stopPropagation();
-    var menu = document.getElementById('browserMenu');
-    menu.hidden = !menu.hidden;
-  });
-  // 点面板其它地方收起来；菜单里的点击自己处理
-  document.addEventListener('click', function () {
-    var menu = document.getElementById('browserMenu');
-    if (menu) { menu.hidden = true; }
-  });
-  document.getElementById('browserMenu').addEventListener('click', function (e) {
-    e.stopPropagation();
-  });
-  document.getElementById('btnSavePort').addEventListener('click', function () {
-    post({ t: 'cmd', name: 'setPort', value: document.getElementById('inpPort').value.trim() });
-  });
-  document.getElementById('btnClean').addEventListener('click', function () {
-    post({ t: 'cmd', name: 'clean' });
-  });
-  document.getElementById('btnLogClear').addEventListener('click', function () {
-    document.getElementById('logBox').textContent = '';
-  });
-  // 退出按钮在外壳（WinForms 侧），页面里没有；保留判空防止脚本中断
-  var btnExit = document.getElementById('btnExit');
-  if (btnExit) {
-    btnExit.addEventListener('click', function () { post({ t: 'cmd', name: 'exit' }); });
-  }
-  document.getElementById('btnDevTools').addEventListener('click', function () {
-    post({ t: 'cmd', name: 'devtools' });
-  });
-  document.getElementById('btnOpenRepo').addEventListener('click', function () {
-    post({ t: 'cmd', name: 'openRepo' });
-  });
-
-  // ── 日志 ────────────────────────────────────────────────
-  var logBox = document.getElementById('logBox');
-  function appendLog(text) {
-    if (!text) { return; }
-    var atBottom = logBox.scrollTop + logBox.clientHeight >= logBox.scrollHeight - 30;
-    logBox.textContent += text;
-    if (atBottom) { logBox.scrollTop = logBox.scrollHeight; }
-  }
-
-  // 键盘：F5 刷新禁用、Ctrl+Shift+I 开发者工具
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'F5') { e.preventDefault(); }
-    if (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i')) {
-      e.preventDefault();
-      post({ t: 'cmd', name: 'devtools' });
-    }
-  });
-
-  // 【DPI】用 CSS zoom 把页面缩放到面板的「设备像素」坐标系。
-  // 面板自绘控件在 200% 缩放下客户区是 2004×1564 设备像素，而 WebView2 给的 CSS 视口
-  // 是 1810×1514、devicePixelRatio 2 —— 不处理就会显示成两倍大、右侧被裁掉。
-  // Chrome 的 zoom 会把布局视口除以 zoom、渲染尺寸乘以 zoom，devicePixelRatio 不变，
-  // 所以 zoom = dpr 之后：视口 ≈ 905 CSS，每 CSS px 占 2 设备像素，字号视觉尺寸正好。
-  // 【DPI】缩放交给 C# 侧的 WebView2 ZoomFactor（RasterizationScale 钉 1、ZoomFactor =
-  // 面板缩放系数），页面这里不再自己 zoom —— 两者叠加会变成 4 倍。
-  var dpr = window.devicePixelRatio || 1;
-
-  // 就绪：告诉 C# 可以推数据了（顺带把视口尺寸报回去，方便排查 DPI 缩放导致的布局问题）
-  post({
-    t: 'ready',
-    w: window.innerWidth,
-    h: window.innerHeight,
-    dpr: window.devicePixelRatio || 1,
-    zoom: (document.body.style.zoom || 'none'),
-    bodyW: document.body.clientWidth
-  });
-  showPage('service');
+// 支持 URL hash 指定初始页（调试/验证用）：index.html#settings
+// 外壳可通过环境变量 DSH_PANEL_PAGE 拼出带 hash 的地址，方便自动截图验证各页面。
+(function applyHashPage() {
+  const raw = (location.hash || '').replace('#', '').trim();
+  if (raw && document.getElementById('page-' + raw)) { switchPage(raw); }
 })();
+
+$('btnCollapse').addEventListener('click', () => {
+  document.body.classList.toggle('collapsed');
+});
+
+/* ---------------- 服务页：状态 ---------------- */
+
+// 文案切换时轻轻缩一下，让「按钮真的换了个意思」看得出来。offsetWidth 强制重排以重启动画。
+function replaySwap(el) {
+  el.classList.remove('swap');
+  void el.offsetWidth;
+  el.classList.add('swap');
+}
+
+// 主按钮换文案时带上过渡；文字没变就只更新样式，避免每 1.5 秒重放一次动画
+function setMainButton(btn, text, cls) {
+  const t = btn.querySelector('.btxt');
+  const changed = !!t && t.textContent !== text;
+  if (t) t.textContent = text;
+  btn.className = cls;
+  if (changed) replaySwap(btn);
+}
+
+// 切主题：先给 body 挂 .theming（CSS 里统一所有元素的过渡时长），220ms 后摘掉。
+// 不做去重的话，每 1.5 秒一次的 state 推送会反复重开这个窗口，
+// 把用户正在做的 hover / 开关滑动动画也一起压成 .16s。
+let curDark = null;
+let themeTimer = 0;
+
+function applyTheme(dark) {
+  const d = !!dark;
+  if (curDark === d) return;
+
+  const first = curDark === null;   // 首帧：直接落位，别让启动瞬间从默认深色渐变到浅色
+  curDark = d;
+
+  if (first) {
+    document.body.classList.toggle('light', !d);
+    return;
+  }
+
+  document.body.classList.add('theming');
+  document.body.classList.toggle('light', !d);
+  clearTimeout(themeTimer);
+  themeTimer = setTimeout(() => document.body.classList.remove('theming'), 240);
+}
+
+function renderState(s) {
+  lastState = s;
+  cache.state = s;
+
+  const running = !!s.running;
+  const starting = !!s.starting;
+  const restarting = !!s.restarting;
+
+  $('dot').className = 'dot' + (running ? ' on' : starting ? ' busy' : '');
+
+  const stateText = $('stateText');
+  const badge = $('stateBadge');
+  const urlText = $('urlText');
+  const hint = $('heroHint');
+  const port = s.port || 3080;
+
+  if (starting) {
+    stateText.textContent = restarting ? '正在重启…' : '启动中…';
+    badge.textContent = '启动中';
+    badge.className = 'badge busy';
+    urlText.textContent = '正在拉起服务，请稍候（首次可能要几十秒）';
+    hint.textContent = '启动中会一直写服务日志，日志页可实时查看';
+  } else if (running) {
+    stateText.textContent = s.clean ? '运行中（纯净）' : '运行中';
+    badge.textContent = s.clean ? '纯净运行' : '运行中';
+    badge.className = 'badge ok';
+    urlText.textContent = s.url || ('http://127.0.0.1:' + port);
+    hint.textContent = '主按钮现在是「停止 DSH」；停止服务不会关闭面板，网页用旁边的地球按钮打开';
+  } else if (s.failMsg) {
+    stateText.textContent = '启动失败';
+    badge.textContent = '启动失败';
+    badge.className = 'badge busy';
+    urlText.textContent = s.failMsg;
+    hint.textContent = '失败原因已写进服务日志，日志页可查；详情看面板日志';
+  } else {
+    stateText.textContent = '已停止';
+    badge.textContent = '已停止';
+    badge.className = 'badge';
+    urlText.textContent = '未运行 · 端口 ' + port;
+    hint.textContent = '服务跑起来后主按钮会变成「停止 DSH」；停止服务不会关闭面板';
+  }
+
+  $('portLabel').textContent = '端口 ' + port;
+
+  const btnMain = $('btnMain');
+  const btnRestart = $('btnRestart');
+  const btnConfirm = $('btnRestartConfirm');
+  btnMain.disabled = false;
+  btnConfirm.textContent = '确认重启';
+  btnConfirm.disabled = false;
+
+  // 「确认重启」是网页内的二次确认（不弹 MessageBox）。离开运行态或超时 6 秒自动收起。
+  if (armedRestart && (!running || Date.now() - armedAt > 6000)) { armedRestart = false; }
+
+  btnRestart.hidden = true;
+  btnRestart.classList.remove('collapse');
+  btnConfirm.classList.remove('on');
+
+  if (starting) {
+    setMainButton(btnMain, restarting ? '正在重启…' : '启动中…', 'btn primary big busy');
+    btnMain.disabled = true;
+  } else if (running) {
+    // 重启图标不用 display:none 收起 —— 那样主按钮会先瞬间撑宽 56px 再开始动画。
+    // 用 .collapse 把它的宽度收到 0，三个按钮同步做过渡。
+    btnRestart.hidden = false;
+    btnRestart.classList.toggle('collapse', armedRestart);
+    btnConfirm.classList.toggle('on', armedRestart);
+    // 确认态：主按钮收成 46×46 的红色方块（只留停止图标），把中间的位置让给「确认重启」。
+    // 宽度的变化靠 .btn.big / .btn.compact / .confirm-restart 的 flex 过渡完成。
+    setMainButton(btnMain,
+      '停止 DSH',
+      armedRestart ? 'btn danger big compact' : 'btn danger big');
+  } else if (s.failMsg) {
+    setMainButton(btnMain, '✗ 启动失败，重试', 'btn primary big');
+  } else {
+    setMainButton(btnMain, '启动并打开 DSH', 'btn primary big');
+  }
+
+  $('btnOpenWeb').hidden = !running;
+
+  applyTheme(s.dark);
+  renderInfo();
+}
+
+$('btnMain').addEventListener('click', () => {
+  if (!lastState) return;
+
+  const btn = $('btnMain');
+  if (armedRestart) { armedRestart = false; }   // 点主按钮就放弃这次重启确认
+
+  // 运行中：主按钮是「停止 DSH」。具体确认由外壳的 MessageBox 负责，
+  // 所以这里只给一个乐观的忙碌态；2.5 秒还没变化（用户在确认框点了「否」）就回滚。
+  if (lastState.running) {
+    setMainButton(btn, '正在停止…', 'btn danger big busy');
+    btn.disabled = true;
+    cmd('stop');
+    setTimeout(() => {
+      if (lastState && lastState.running && !lastState.starting) { renderState(lastState); }
+    }, 2500);
+    return;
+  }
+
+  // 乐观置忙：不等回推就换文案，否则点击瞬间像没反应
+  setMainButton(btn, '启动中…', 'btn primary big busy');
+  btn.disabled = true;
+  $('dot').className = 'dot busy';
+  $('stateText').textContent = '启动中…';
+  $('urlText').textContent = '正在拉起服务，请稍候…';
+
+  cmd('start');
+});
+
+// 点一下 ⟳ 不直接重启：先把它自己展开成「确认重启」，再点才真重启。
+// 这样确认框长在按钮位置上（不弹 MessageBox，也不会被弹窗挡住页面）。
+$('btnRestart').addEventListener('click', () => {
+  armedRestart = true;
+  armedAt = Date.now();
+  if (lastState) renderState(lastState);
+});
+
+$('btnRestartConfirm').addEventListener('click', () => {
+  armedRestart = false;
+  const b = $('btnRestartConfirm');
+  b.disabled = true;
+  b.textContent = '正在重启…';
+  toast('正在重启服务…');
+  cmd('restartNow');
+});
+
+$('btnOpenWeb').addEventListener('click', () => cmd('openWeb'));
+
+/* ---------------- 服务页：插件列表 ---------------- */
+
+// 本地 link: 包的 version 是一整条 file: 路径（例：link:C:/…/dsh-approval-timeout），
+// 直接塞进版本位会把整行撑成三行、把开关顶歪。缩成「本地链接」，完整值放 title。
+const verLabel = (v) => {
+  const s = String(v || '');
+  return (/^link:/i.test(s) || s.length > 24) ? '本地链接' : s;
+};
+
+function renderPlugins(m) {
+  cache.plugins = m;
+  const list = $('pluginList');
+  const hint = $('pluginHint');
+  if (!list) return;
+
+  if (!m.ok) {
+    hint.textContent = m.err || '无法读取插件清单';
+    hint.className = 'sum warn';
+    list.innerHTML = '';
+    renderInfo();
+    return;
+  }
+
+  hint.textContent = `共 ${m.total} 个，已启用 ${m.on} 个。改动在下次启动 DSH 时生效。`;
+  hint.className = 'sum';
+
+  list.innerHTML = (m.list || []).map((p) => `
+    <div class="prow${p.lock ? ' locked' : ''}">
+      <div class="pnm">
+        <div class="pn">${esc(p.d)}${p.lock ? '<span class="tag">命脉</span>' : ''}</div>
+        <div class="pmeta"><span class="pk">${esc(p.n)}</span></div>
+      </div>
+      <span class="pv" title="${esc(p.v)}">${esc(verLabel(p.v))}</span>
+      <label class="sw"><input type="checkbox"${p.on ? ' checked' : ''}${p.lock ? ' disabled' : ''}><i></i></label>
+    </div>`).join('');
+
+  // 事件绑定走委托，37 个插件的 37 次 addEventListener 没必要
+  Array.from(list.querySelectorAll('.prow')).forEach((row, i) => {
+    const item = (m.list || [])[i];
+    const input = row.querySelector('input');
+    if (!input || !item || item.lock) return;
+    input.addEventListener('change', (e) => {
+      cmd('togglePlugin', { plugin: item.n, on: e.target.checked });
+      toast((e.target.checked ? '已启用 ' : '已关闭 ') + item.d);
+    });
+  });
+
+  renderInfo();
+}
+
+$('btnPluginAll').addEventListener('click', () => {
+  cmd('toggleAllPlugins', { on: true });
+  toast('正在启用全部插件…');
+});
+$('btnPluginNone').addEventListener('click', () => {
+  cmd('toggleAllPlugins', { on: false });
+  toast('正在关闭全部插件…');
+});
+
+/* ---------------- 服务页：信息卡（多来源汇总） ---------------- */
+
+function renderInfo() {
+  const st = cache.state || {};
+  const p = cache.paths || {};
+  const pl = cache.plugins || {};
+  const br = cache.browsers || {};
+  const cfg = cache.settings || {};
+  const port = st.port || cfg.port || 3080;
+
+  const addr = st.running ? (originOf(st.url) || ('http://127.0.0.1:' + port)) : '—';
+  $('kAddr').textContent = addr;
+
+  $('kPort').textContent = String(port);
+  $('kMode').textContent = (st.mode || cfg.mode) === 'tab' ? '普通窗口' : '无地址栏独立窗口';
+
+  // 浏览器：优先用动作里配置的路径；没配就显示自动探测到的那只
+  const browserText = cfg.browser
+    ? baseName(cfg.browser)
+    : (br.current ? '自动 · ' + br.current : '自动');
+  $('kBrowser').textContent = browserText;
+
+  $('kPlugins').textContent = pl.ok ? `${pl.on} / ${pl.total}` : '—';
+  $('kPid').textContent = st.pid ? String(st.pid) : '—';
+
+  const setPath = (id, val) => {
+    const el = $(id);
+    const text = val || '—';
+    el.textContent = text;
+    el.title = text;          // 路径一律省略号截断，完整值放 title
+  };
+  setPath('kSvcCmd', p.svccmd);
+  setPath('kWorkDir', p.workdir);
+  setPath('kSvcLog', p.svclog);
+  setPath('kStateLog', p.statelog);
+  setPath('kCfg', p.cfgfile);
+}
+
+/* ---------------- 设置页 ---------------- */
+
+const bindSwitch = (id, key) => {
+  $(id).addEventListener('change', (e) => {
+    cmd('setSetting', { key, value: e.target.checked });
+  });
+};
+
+bindSwitch('swAutoStart', 'autoStart');
+bindSwitch('swAutoOpen', 'openOnStart');
+bindSwitch('swAutoTray', 'autoTray');
+bindSwitch('swCloseToTray', 'closeToTray');
+bindSwitch('swStopWithPanel', 'stopOnClose');
+bindSwitch('swBalloon', 'notifyCrash');
+bindSwitch('swDark', 'dark');
+bindSwitch('swDev', 'dev');
+
+function setSegMode(mode) {
+  const want = mode === 'tab' ? 'tab' : 'app';
+  document.querySelectorAll('#segMode button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.mode === want);
+  });
+}
+
+document.querySelectorAll('#segMode button').forEach((b) => {
+  b.addEventListener('click', () => {
+    if (b.classList.contains('active')) return;
+    setSegMode(b.dataset.mode);
+    cmd('setSetting', { key: 'mode', value: b.dataset.mode });
+  });
+});
+
+function renderSettings(s) {
+  cache.settings = s;
+
+  $('swAutoStart').checked = !!s.autoStart;
+  $('swAutoOpen').checked = !!s.openOnStart;
+  $('swAutoTray').checked = !!s.autoTray;
+  $('swCloseToTray').checked = !!s.closeToTray;
+  $('swStopWithPanel').checked = !!s.stopOnClose;
+  $('swBalloon').checked = !!s.notifyCrash;
+  $('swDev').checked = !!s.dev;
+  $('swDark').checked = !!s.dark;
+  setSegMode(s.mode);
+
+  // 正在编辑端口时不覆盖，否则 1.5 秒一次的推送会把输入冲掉
+  if (!editingPort && document.activeElement !== $('inpPort')) {
+    $('inpPort').value = s.port;
+  }
+
+  renderInfo();
+}
+
+/* ---------------- 设置页：默认浏览器自绘下拉 ---------------- */
+
+function closeBrowserMenu() {
+  const menu = $('browserMenu');
+  if (menu) menu.hidden = true;
+}
+
+function renderBrowsers(m) {
+  cache.browsers = m;
+  const currentPath = m.currentPath || '';
+  const currentName = m.current || '';
+
+  $('browserLabel').textContent = currentPath
+    ? baseName(currentPath)
+    : (currentName ? '自动 · ' + currentName : '自动（未探测到）');
+
+  const menu = $('browserMenu');
+  const rows = [];
+
+  rows.push(`<button class="mi${currentPath ? '' : ' on'} dim" data-path="">
+    ${currentName ? '自动 · ' + esc(currentName) : '自动（未探测到浏览器）'}</button>`);
+
+  (m.list || []).forEach((b) => {
+    const on = currentPath && b.path === currentPath;
+    rows.push(`<button class="mi${on ? ' on' : ''}" data-path="${esc(b.path)}">${esc(b.name)}</button>`);
+  });
+
+  if ((m.list || []).length) rows.push('<div class="sep"></div>');
+  rows.push('<button class="mi dim" data-pick="file">选择浏览器文件…</button>');
+
+  menu.innerHTML = rows.join('');
+
+  menu.querySelectorAll('.mi').forEach((mi) => {
+    mi.addEventListener('click', () => {
+      closeBrowserMenu();
+      if (mi.dataset.pick === 'file') { cmd('pickBrowserFile'); return; }
+      cmd('setBrowser', { value: mi.dataset.path });
+    });
+  });
+
+  renderInfo();
+}
+
+$('btnPickBrowser').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const menu = $('browserMenu');
+  if (!menu.hidden) { menu.hidden = true; return; }
+  // 菜单贴着卡片下沿时会被视口裁掉，空间不够就改成向上弹
+  const rect = e.currentTarget.getBoundingClientRect();
+  const est = menu.querySelectorAll('.mi').length * 36 + 14;
+  menu.classList.toggle('up', window.innerHeight - rect.bottom < est + 16);
+  menu.hidden = false;
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#pickBrowser')) closeBrowserMenu();
+  // 点按钮区以外的地方 = 放弃这次「确认重启」
+  if (armedRestart && !e.target.closest('.btns')) {
+    armedRestart = false;
+    if (lastState) renderState(lastState);
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  closeBrowserMenu();
+  if (armedRestart) {
+    armedRestart = false;
+    if (lastState) renderState(lastState);
+  }
+});
+
+$('btnClean').addEventListener('click', () => {
+  const ok = confirm('启动纯净 DSH？\n\n会用官方默认插件集另起一个实例，用于排查插件问题。\n如果服务正在运行，需要先停止它。');
+  if (ok) cmd('clean');
+});
+
+$('inpPort').addEventListener('focus', () => { editingPort = true; });
+$('inpPort').addEventListener('blur', () => { editingPort = false; });
+$('btnPortSave').addEventListener('click', () => {
+  cmd('setPort', { value: $('inpPort').value });
+  editingPort = false;
+  toast('端口已保存，下次启动 DSH 时生效');
+});
+
+$('btnPickDsh').addEventListener('click', () => cmd('pickDshHome'));
+$('btnProbeDsh').addEventListener('click', () => cmd('probeDshHome'));
+
+/* ---------------- 设置页：DSH 目录 ---------------- */
+
+function renderPaths(p) {
+  cache.paths = p;
+
+  const pathEl = $('dshPath');
+  pathEl.textContent = p.dshhome || '（未找到）';
+  pathEl.title = p.dshhome || '';
+  pathEl.className = p.cfgok ? 'path ok' : 'path';
+
+  const st = $('dshState');
+  if (p.cfgok) {
+    st.textContent = '已找到 DSH 数据目录，插件清单可读写。';
+    st.className = 'st ok';
+  } else {
+    st.textContent = '没有找到 DSH 数据目录（需要包含 profiles 子目录）。点「选择…」手动指定。';
+    st.className = 'st';
+  }
+
+  renderInfo();
+}
+
+/* ---------------- 日志 ---------------- */
+
+function appendLog(text) {
+  const box = $('logBox');
+  if (!box) return;
+
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
+  box.textContent += text;
+  if (box.textContent.length > 200000) {
+    box.textContent = box.textContent.slice(-120000);
+  }
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+$('btnClearLog').addEventListener('click', () => {
+  $('logBox').textContent = '';
+  cmd('clearLog');
+});
+
+/* ---------------- 关于 ---------------- */
+
+$('btnRepo').addEventListener('click', () => cmd('openRepo'));
+$('btnDevTools').addEventListener('click', () => cmd('devtools'));
+
+/* ---------------- C# → 页面 ---------------- */
+
+function handleMessage(m) {
+  if (!m || !m.t) return;
+
+  switch (m.t) {
+    case 'state':    renderState(m); break;
+    case 'settings': renderSettings(m); break;
+    case 'paths':    renderPaths(m); break;
+    case 'plugins':  renderPlugins(m); break;
+    case 'browsers': renderBrowsers(m); break;
+    case 'theme':
+      applyTheme(m.dark);
+      if (cache.settings) cache.settings.dark = !!m.dark;
+      $('swDark').checked = !!m.dark;
+      break;
+    case 'toast':    toast(m.msg || ''); break;
+    case 'log':      appendLog(m.text || ''); break;
+    case 'nav':      switchPage(m.page || 'service'); break;
+    default:
+      console.log('[外壳]', m);
+      break;
+  }
+}
+
+if (bridge) {
+  bridge.addEventListener('message', (e) => handleMessage(e.data));
+}
+
+/* ---------------- 握手 ---------------- */
+
+window.addEventListener('resize', () => {
+  post({ t: 'resize', w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio });
+});
+
+// ready 必须在挂完所有监听之后发，否则外壳会抢在页面准备好之前推全量。
+// 附带一份布局诊断：侧边栏/内容区/卡片的实际 CSS 宽度，用于排查「控件被裁」这类问题。
+post({
+  t: 'ready',
+  w: window.innerWidth,
+  h: window.innerHeight,
+  dpr: window.devicePixelRatio,
+  zoom: 1,
+  diag: (() => {
+    const rect = (sel) => {
+      const el = document.querySelector(sel);
+      return el ? Math.round(el.getBoundingClientRect().width) : -1;
+    };
+    return {
+      sidebar: rect('.sidebar'),
+      content: rect('.content'),
+      card: rect('.card'),
+      navMin: getComputedStyle(document.documentElement).getPropertyValue('--nav-w').trim(),
+    };
+  })(),
+});

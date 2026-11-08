@@ -1,18 +1,33 @@
 # 编译产物
 /dist/
-/*.exe
-/*.pdb
-/*.obj
+/bin/
+/obj/
+/packages/
+*.exe
+*.pdb
+*.obj
 
-# 本地测试 / 调试临时目录（截图、日志、测试配置都在里面）
-/_t/
-/testenv/
+# v1 归档目录里的构建产物
+/v1/dist/
+/v1/bin/
+/v1/obj/
 
-# 面板运行期把日志和配置写在 %LOCALAPPDATA%\DshPanel 下，仓库里不该出现
+# 运行期数据（面板把日志、配置、浏览器 profile 写在 exe 同级或 %LOCALAPPDATA%）
+/DshPanel2-data/
+/WebView2Data/
 panel.log
+panel.log.failure
 panel-state.log
 panel.config.ini
+selftest.log
 browser-profile/
+
+# 本地验证用产物
+/shots/
+/backup/
+/.tmp/
+/_t/
+/testenv/
 
 # 过程草稿与截图，不随源码发布
 优化提示词.md

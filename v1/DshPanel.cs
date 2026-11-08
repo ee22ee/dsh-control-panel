@@ -222,6 +222,10 @@ namespace DshPanel
                 StartRevealGuard();          // 兜底：网页迟迟不就绪也要把窗口挪回屏幕
                 if (!_cfg.AutoTray) { this.Location = new Point(-32000, -32000); }
             }
+
+            // 桌宠（dsh-pet）探测：它是个独立进程，面板只负责发现和转发请求。
+            // 每 2 秒看一眼 .state\api.json 和 /ping，桌宠不在时设置页不显示这张卡。
+            PetStartWatch();
         }
 
         // 首帧就绪前窗口停在屏幕外，就绪后挪回居中位置再刷新一次。
@@ -1251,6 +1255,10 @@ namespace DshPanel
             }
 
             _log.AppendText(s);
+
+            // 网页版日志页接的是增量：旧 TextBox 收到什么就同步推一份过去
+            PushLogToWeb(s);
+
             if (_log.TextLength > 60000)
             {
                 // 从整行边界截断，别把半行留在最上面
@@ -1527,6 +1535,10 @@ namespace DshPanel
         // 插件列表文件。留空 = 跟着 DshHome 走（见下面的 PluginJson 属性）。
         public string PluginJsonRaw  = "";
 
+        // 桌宠（dsh-pet）目录。留空 = 自动探测（见 PanelPet.cs 的 PetProbe）。
+        // 面板认的入口是 <桌宠目录>\.state\api.json，没有这个文件就当作桌宠没在跑。
+        public string PetDir         = "";
+
         // ---- 设置页里的开关（全部由面板自己写回本文件）----
         public bool AutoStart     = false;  // 开机自启（写 HKCU 的 Run 键，不触发 UAC）
         public bool AutoOpen      = true;   // 启动服务后自动打开网页
@@ -1544,6 +1556,16 @@ namespace DshPanel
                 if (!string.IsNullOrEmpty(PluginJsonRaw)) { return PluginJsonRaw; }
                 if (string.IsNullOrEmpty(DshHome)) { return ""; }
                 return Path.Combine(Path.Combine(DshHome, "profiles"), Path.Combine("web", "package.json"));
+            }
+        }
+
+        // 桌宠的运行时入口文件
+        public string PetApiFile
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(PetDir)) { return ""; }
+                return Path.Combine(Path.Combine(PetDir, ".state"), "api.json");
             }
         }
 
@@ -1737,6 +1759,7 @@ namespace DshPanel
                     else if (k == "browserpath")    { c.BrowserPath    = v; }
                     else if (k == "browserprofile") { c.BrowserProfile = v; }
                     else if (k == "pluginjson")     { c.PluginJsonRaw  = v; }
+                    else if (k == "petdir")         { c.PetDir         = v; }
                     else if (k == "autostart")      { c.AutoStart      = Truthy(v); }
                     else if (k == "autoopen")       { c.AutoOpen       = Truthy(v); }
                     else if (k == "autotray")       { c.AutoTray       = Truthy(v); }
@@ -1774,6 +1797,7 @@ namespace DshPanel
                 SetKey(lines, "browserpath",    BrowserPath);
                 SetKey(lines, "browserprofile", BrowserProfile);
                 SetKey(lines, "pluginjson",     PluginJsonRaw);
+                SetKey(lines, "petdir",         PetDir);
                 SetKey(lines, "autostart",      Flag(AutoStart));
                 SetKey(lines, "autoopen",       Flag(AutoOpen));
                 SetKey(lines, "autotray",       Flag(AutoTray));
@@ -1877,6 +1901,10 @@ namespace DshPanel
                 sb.AppendLine("#   <dshhome>\\profiles\\web\\package.json");
                 sb.AppendLine("# 只有在插件清单放在别处时才需要手动填。插件启停页直接读写它的 bundles 数组。");
                 sb.AppendLine("pluginjson = " + PluginJsonRaw);
+                sb.AppendLine();
+                sb.AppendLine("# 桌宠（dsh-pet）目录。留空 = 自动探测（%LOCALAPPDATA%\\dsh-pet 与 exe 向上的 dsh-pet 目录）。");
+                sb.AppendLine("# 面板读 <桌宠目录>\\.state\\api.json 拿端口和令牌；这个文件不存在就当作桌宠没在运行。");
+                sb.AppendLine("petdir = " + PetDir);
                 sb.AppendLine();
                 sb.AppendLine("# ---- 设置页里的开关（0 = 关，1 = 开；在面板里点开关会自动写回这里）----");
                 sb.AppendLine("# 开机自启（写 HKCU 的 Run 键，不需要管理员、不弹 UAC）");

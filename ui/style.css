@@ -1,11 +1,17 @@
 /* ==========================================================================
-   DeepSeek Harness 控制台 —— 配色与 WinForms 版 PanelTheme.cs 的 Pal 一一对应。
-   切主题只改 <html data-theme="light|dark">，所有颜色由 CSS 变量整体重算，
-   不存在「一半新一半旧」的中间态。
+   DSH 控制面板 v1.0 —— 单渲染面样式
+
+   配色与组件来自旧面板 ui/style.css（与 WinForms 版 PanelTheme.cs 的 Pal 一一对应），
+   外壳（标题栏 / 可折叠侧边导航）是新版自己的。
+
+   与旧版的关键差别：
+     旧版主题是 WinForms 的 Theme 静态色板 + Retint 递归重涂，切换时会「半新半旧一帧」，
+     还有 CSS 与 GDI+ 两套颜色来源。本版全部走 CSS 变量：切主题只改一个 class，
+     浏览器合成面天然原子。
    ========================================================================== */
 
 :root,
-:root[data-theme="dark"] {
+body {
   --bg:          #1a1d22;
   --shell:       #20242a;
   --card:        #262a31;
@@ -28,9 +34,13 @@
   --log-fg:      #b0e0b2;
   --log-dim:     #78889a;
   --shadow:      0 1px 3px rgba(0,0,0,.35);
+  --radius:      14px;
+  --title-h:     42px;
+  --nav-w:       188px;
+  --nav-w-min:   62px;
 }
 
-:root[data-theme="light"] {
+body.light {
   --bg:          #edf0f6;
   --shell:       #e7ebf2;
   --card:        #ffffff;
@@ -58,12 +68,14 @@
 * { box-sizing: border-box; }
 
 html, body {
-  height: 100%;
   margin: 0;
+  height: 100%;
   overflow: hidden;
 }
 
 body {
+  display: flex;
+  flex-direction: column;
   background: var(--bg);
   color: var(--text);
   font: 13px/1.5 "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
@@ -71,103 +83,235 @@ body {
   user-select: none;
 }
 
-.app { display: flex; height: 100%; }
+/*
+  切主题的这 220ms 内，给**所有**元素套同一条过渡。
 
-/* ───────── 左侧导航 ───────── */
-.nav {
-  width: 220px;
-  flex: 0 0 220px;
-  background: var(--bg);
-  display: flex;
-  flex-direction: column;
-  padding: 22px 14px 14px;
-  gap: 18px;
+  为什么必须统一：颜色分散在几十条规则里，各自还有交互用的 transition
+  （body .18s / .nav .12s / .btn .12s / .sw .16s），而卡片、标题栏、侧边栏背景、
+  .srow 分隔线根本没写 transition —— 切主题时就变成「卡片瞬间变白、body 还在渐变」，
+  中间那几帧是明显的新旧混搭。统一成一条 .16s 后整个界面是同一个速度换过去的。
+
+  只在切换窗口内用 !important 压住各控件自己的过渡；窗口结束后移除，
+  hover / 开关滑动 / 抽屉展开的原有节奏完全不受影响。
+*/
+body.theming,
+body.theming * {
+  transition: background-color .16s ease, color .16s ease,
+              border-color .16s ease, box-shadow .16s ease !important;
+}
+body.theming ::-webkit-scrollbar-thumb {
+  transition: background-color .16s ease !important;
 }
 
-.brand { display: flex; align-items: center; gap: 12px; padding: 0 6px 14px; }
-.brand .ava { width: 56px; height: 56px; border-radius: 14px; flex: 0 0 auto; }
-.brand .name { font-size: 15px; font-weight: 700; letter-spacing: .2px; }
-.brand .sub  { font-size: 11px; color: var(--sub); margin-top: 2px; }
-.brand .ver  { opacity: .8; }
+/* ============================ 标题栏 ============================ */
 
-.nav-list { display: flex; flex-direction: column; gap: 4px; }
-.nav .exit { margin-top: auto; }
-
-.nav-item {
+.titlebar {
+  flex: none;
+  height: var(--title-h);
   display: flex;
   align-items: center;
-  gap: 12px;
-  width: 100%;
-  height: 44px;
-  padding: 0 12px;
+  gap: 10px;
+  padding: 0 6px 0 8px;
+  background: var(--shell);
+  border-bottom: 1px solid var(--border-soft);
+  user-select: none;
+  cursor: default;
+}
+
+.collapse {
+  width: 30px; height: 30px;
+  padding: 0;
+  border: 0; border-radius: 7px;
+  background: transparent; color: var(--sub);
+  display: grid; place-items: center;
+  cursor: pointer;
+}
+.collapse svg {
+  width: 17px; height: 17px;
+  fill: none; stroke: currentColor;
+  stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round;
+}
+.collapse:hover { background: var(--hover); color: var(--text); }
+
+.brand { display: flex; align-items: center; gap: 9px; pointer-events: none; }
+
+.logo {
+  font-weight: 700; font-size: 11.5px; letter-spacing: .14em;
+  color: #fff; background: var(--accent);
+  padding: 3px 8px; border-radius: 6px;
+}
+
+.titlebar .title { font-size: 13px; color: var(--sub); }
+
+.badge {
+  font-size: 11px; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--sub);
+  pointer-events: none;
+}
+.badge.ok   { border-color: var(--ok);   color: var(--ok);   background: var(--ok-soft); }
+.badge.busy { border-color: var(--warn); color: var(--warn); }
+
+.dragspace { flex: 1 1 auto; height: 100%; }
+
+.tb-btns { display: flex; gap: 2px; }
+
+.tb {
+  width: 34px; height: 28px;
+  border: 0; border-radius: 6px;
+  background: transparent; color: var(--sub);
+  font-size: 13px; cursor: pointer;
+}
+.tb:hover { background: var(--hover); color: var(--text); }
+.tb-close:hover { background: var(--danger); color: #fff; }
+
+/* ============================ 主体 ============================ */
+
+.body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+/* ============================ 侧边导航 ============================ */
+
+.sidebar {
+  flex: none;
+  width: var(--nav-w);
+  padding: 12px 10px;
+  background: var(--shell);
+  border-right: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: width .16s ease;
+  overflow: hidden;
+}
+
+body.collapsed .sidebar { width: var(--nav-w-min); padding: 12px 8px; }
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: 40px;
+  padding: 0 11px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 9px;
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 14px;
+  font-size: 13.5px;
   text-align: left;
   cursor: pointer;
+  white-space: nowrap;
   position: relative;
-  transition: background .12s ease;
+  transition: background .12s ease, color .12s ease;
 }
-.nav-item svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; opacity: .9; }
-.nav-item:hover { background: var(--hover); }
-.nav-item.active { background: var(--accent-soft); color: var(--accent-text); }
-.nav-item.active::before {
+
+.nav .nic {
+  flex: 0 0 auto;
+  width: 18px; height: 18px;
+  fill: none; stroke: currentColor;
+  stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+  opacity: .88;
+}
+
+.nav:hover { background: var(--hover); }
+
+.nav.active { background: var(--accent-soft); color: var(--accent-text); }
+.nav.active::before {
   content: "";
-  position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px;
+  position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px;
   border-radius: 0 3px 3px 0; background: var(--accent);
 }
-.nav-item.exit { color: var(--sub); }
-.nav-item.exit:hover { color: var(--danger); background: var(--danger-soft); }
 
-/* ───────── 内容区 ───────── */
-/* 外壳（标题栏 / 左侧导航 / 退出）是 WinForms 的，这里铺满整个客户区剩余部分 */
+body.collapsed .nav { padding: 0 12px; }
+body.collapsed .nav .lbl { display: none; }
+
+/* ============================ 内容区 ============================ */
+
 .content {
-  height: 100%;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  padding: 14px 16px 14px 16px;
+  padding: 15px 16px;
   overflow: hidden;
 }
 
 .page { display: none; flex: 1 1 auto; min-width: 0; min-height: 0; width: 100%; gap: 14px; }
-.page.active { display: flex; }
+.page.active { display: flex; animation: fade .16s ease; }
 
-#page-service { min-width: 0; }
+@keyframes fade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+/* 服务页：左插件列表 / 右服务控制 + 信息 */
+#page-service { flex-direction: row; min-width: 0; }
 .col-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
-.col-side { flex: 0 0 340px; min-width: 0; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
-#page-settings { flex-direction: column; overflow-y: auto; overflow-x: hidden; min-height: 0; padding-right: 6px; }
-#page-settings::-webkit-scrollbar { width: 10px; }
-#page-settings::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
-#page-log { min-height: 0; }
-#page-about { overflow: auto; }
-#page-about .card.center { margin: auto; }
-#page-about::-webkit-scrollbar { width: 10px; }
-#page-about::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+.col-side { flex: 0 0 336px; min-width: 0; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
 
-/* ───────── 卡片 ───────── */
+/* 设置页：单栏滚动 */
+#page-settings { flex-direction: column; overflow-y: auto; overflow-x: hidden; padding-right: 6px; }
+
+/* 日志页撑满 */
+#page-log { min-height: 0; }
+
+/* 关于页居中 */
+#page-about { overflow: auto; align-items: center; justify-content: center; }
+
+/* 细滚动条 */
+#page-settings::-webkit-scrollbar,
+.col-side::-webkit-scrollbar,
+.plugin-list::-webkit-scrollbar,
+.log::-webkit-scrollbar,
+#page-about::-webkit-scrollbar { width: 10px; height: 10px; }
+#page-settings::-webkit-scrollbar-thumb,
+.col-side::-webkit-scrollbar-thumb,
+.plugin-list::-webkit-scrollbar-thumb,
+.log::-webkit-scrollbar-thumb,
+#page-about::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+/* ============================ 卡片 ============================ */
+
 .card {
   background: var(--card);
   border: 1px solid var(--border-soft);
-  border-radius: 14px;
-  padding: 16px 18px;
+  border-radius: var(--radius);
+  padding: 15px 17px;
   box-shadow: var(--shadow);
   flex: 0 0 auto;
+  max-width: 900px;
 }
-.card.grow { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
-.card.col  { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
-.card.center { text-align: center; padding: 36px 34px 30px; max-width: min(560px, 100%); }
+.card.grow { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; max-width: none; }
+.card.col  { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; max-width: none; }
+.card.center {
+  text-align: center;
+  padding: 34px 34px 28px;
+  max-width: min(560px, 100%);
+  margin: auto;
+}
 
 .card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-.card-head .ci { width: 16px; height: 16px; fill: none; stroke: var(--sub); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
+.card-head .ci {
+  width: 16px; height: 16px;
+  fill: none; stroke: var(--sub);
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  flex: 0 0 auto;
+}
 .card-head h2 { font-size: 14.5px; font-weight: 700; margin: 0; flex: 1 1 auto; }
 .head-btns { display: flex; gap: 8px; }
 
-/* ───────── 按钮 ───────── */
+.col-side .card { max-width: none; }
+/* 右栏第二张卡（网络监听 / 设置信息）撑满剩余高度，别让下面空一块 */
+.col-side .card:last-child { flex: 1 1 auto; min-height: 0; }
+
+/* ============================ 按钮 ============================ */
+
 .btn {
   border: 1px solid var(--border);
   background: transparent;
@@ -180,86 +324,217 @@ body {
   cursor: pointer;
   transition: background .12s ease, border-color .12s ease, color .12s ease;
 }
-.btn:hover { background: var(--hover); }
-.btn:active { transform: translateY(1px); }
+.btn:hover:not(:disabled) { background: var(--hover); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
 .btn.ghost { border-color: var(--accent); color: var(--accent-text); }
-.btn.ghost:hover { background: var(--accent-soft); }
-.btn.ghost.wide { flex: 1 1 auto; min-width: 0; justify-content: center; }
+.btn.ghost:hover:not(:disabled) { background: var(--accent-soft); }
+.btn.ghost.wide { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; justify-content: center; }
 .btn.primary { border: 0; background: var(--accent); color: #fff; font-weight: 600; }
-.btn.primary:hover { background: var(--accent-deep); }
-.btn.primary.big { height: 46px; font-size: 14px; border-radius: 10px; flex: 1 1 auto; }
+.btn.primary:hover:not(:disabled) { background: var(--accent-deep); }
+/* big 是主按钮尺寸：46px 高，和旁边的 46×46 图标按钮对齐。
+   flex 用 `1 1 0` 而不是 `1 1 auto`：basis 从 0 起才可插值，
+   「确认重启」展开时主按钮才能平滑收缩到 46px，而不是瞬间跳变。 */
+.btn.big {
+  height: 46px; font-size: 14px; border-radius: 10px;
+  flex: 1 1 0; min-width: 0;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  overflow: hidden;
+  transition:
+    flex-basis .26s cubic-bezier(.4, 0, .2, 1),
+    flex-grow .26s cubic-bezier(.4, 0, .2, 1),
+    background-color .12s ease, border-color .12s ease, color .12s ease;
+}
+
+/* 主按钮里的方块图标：平时宽 0 透明，只在「确认重启」的收缩态淡入 + 展开。
+   用实心方块（fill）而不是描边 —— 1.8px 的空心细框缩到 46px 按钮里几乎看不见。 */
+.btn .bico {
+  width: 0; height: 22px; opacity: 0;
+  fill: currentColor; stroke: none;
+  flex: 0 0 auto;
+  transition: width .26s cubic-bezier(.4, 0, .2, 1), opacity .16s ease;
+}
+/* 文字即使透明也仍然占宽度，会把收缩态里的图标挤出 overflow 可视区，
+   所以宽度也要一起收到 0（max-width 可插值，过渡得动）。 */
+.btn .btxt {
+  transition: opacity .16s ease, max-width .26s cubic-bezier(.4, 0, .2, 1);
+  white-space: nowrap; overflow: hidden; max-width: 400px;
+}
+
+/* 收缩态：主按钮变成 46×46 方块，把中间的位置让给「确认重启」 */
+.btn.compact { flex: 0 0 46px; padding: 0; gap: 0; }
+.btn.compact .bico { width: 22px; opacity: 1; }
+.btn.compact .btxt { opacity: 0; max-width: 0; }
+
+/* 「确认重启」平时就在 DOM 里（不是 hidden），只是收成 0 宽 + 透明，
+   这样展开/收回才能靠 flex-basis 过渡，而不是 display:none 的硬切换。 */
+.btn.confirm-restart {
+  flex: 0 0 0; opacity: 0; padding: 0; min-width: 0;
+  margin-left: 0;
+  /* 边框也要收掉：留着 1px 的话它仍有 2px 宽，中间会多出一截空隙 */
+  border-width: 0;
+  overflow: hidden; pointer-events: none;
+  transition:
+    flex-grow .26s cubic-bezier(.4, 0, .2, 1),
+    flex-basis .26s cubic-bezier(.4, 0, .2, 1),
+    padding .26s cubic-bezier(.4, 0, .2, 1),
+    margin-left .26s cubic-bezier(.4, 0, .2, 1),
+    opacity .2s ease .05s;
+}
+.btn.confirm-restart.on {
+  flex: 1 1 0; opacity: 1; padding: 0 16px; margin-left: 10px;
+  border-width: 1px; pointer-events: auto;
+}
 .btn.danger { border: 0; background: var(--danger); color: #fff; font-weight: 600; }
-.btn.danger:hover { filter: brightness(.94); }
-.btn.danger.big { height: 46px; font-size: 14px; border-radius: 10px; flex: 1 1 auto; }
-.btn.icon { width: 46px; height: 46px; padding: 0; border-radius: 10px; display: grid; place-items: center; flex: 0 0 auto; }
-.btn.icon svg { width: 20px; height: 20px; fill: none; stroke: var(--accent-text); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* 必须在这里重写 background：`.btn:hover:not(:disabled)` 带两个伪类，特异性 (0,3,0)
+   高于 `.btn.danger` 的 (0,2,0)，不重写的话悬停会把红底换成 --hover 的灰底，白字直接糊成一片。
+   悬停只做极轻的提亮，不做变暗。 */
+.btn.danger:hover:not(:disabled) { background: var(--danger); filter: brightness(1.06); }
+/* 「关闭网页 DSH」：同样是 big 主按钮，但边框转红，一眼能看出现在是「关」不是「开」 */
+.btn.big.close { border-color: var(--danger); color: var(--danger); }
+.btn.big.close:hover:not(:disabled) { background: var(--danger-soft); }
+.btn.icon {
+  width: 46px; height: 46px; padding: 0; border-radius: 10px;
+  display: grid; place-items: center; flex: 0 0 auto;
+  overflow: hidden;
+  /* 展开「确认重启」时重启图标要收成 0 宽，不能 display:none ——
+     否则主按钮会先瞬间吞掉这 56px，看起来像「先撑大再缩小」。 */
+  transition: width .26s cubic-bezier(.4, 0, .2, 1),
+              margin .26s cubic-bezier(.4, 0, .2, 1),
+              opacity .18s ease,
+              background-color .12s ease, border-color .12s ease;
+}
+/* 收起态：宽度和 margin-left 一起归零 —— 不占空间，也不留多余的间距。
+   border-box 下 width:0 压不住 1px 边框，必须把 border-width 也收掉，否则还残留 2px。 */
+.btn.icon.collapse {
+  width: 0; opacity: 0;
+  border-width: 0;
+  pointer-events: none;
+  margin-left: 0;
+}
+.btn.icon.danger { background: transparent; border: 1px solid var(--border); }
+.btn.icon.danger svg { stroke: var(--danger); }
+.btn.icon.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
+.btn.icon svg {
+  width: 20px; height: 20px;
+  fill: none; stroke: var(--accent-text);
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
 .btn:disabled { opacity: .45; cursor: default; }
 .btn[hidden] { display: none; }
 
-/* ───────── 服务页 ───────── */
+/* 开↔关切换时轻轻缩一下，让「按钮真的换了个意思」看得出来 */
+@keyframes btnswap {
+  0%   { transform: scale(.96); opacity: .55; }
+  60%  { transform: scale(1.015); opacity: 1; }
+  100% { transform: none; opacity: 1; }
+}
+.btn.swap { animation: btnswap .22s ease; }
+
+/* 启动中：按钮表面来回扫一条亮带。只靠文字变灰太容易被当成「点了没反应」。 */
+.btn.busy { position: relative; overflow: hidden; }
+.btn.busy:disabled { opacity: .8; cursor: progress; }
+.btn.busy::after {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0;
+  left: -45%;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.30), transparent);
+  animation: sweep 1.15s linear infinite;
+  pointer-events: none;
+}
+@keyframes sweep { from { left: -45%; } to { left: 105%; } }
+
+.btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+
+/* ============================ 服务页 ============================ */
+
 .sum { font-size: 12.5px; color: var(--sub); margin-bottom: 10px; }
 .sum.warn { color: var(--danger); }
+.sum.ok-text { color: var(--ok); }
 
 .plugin-list { flex: 1 1 auto; overflow-y: auto; min-height: 0; padding-right: 6px; }
-.plugin-list::-webkit-scrollbar { width: 10px; }
-.plugin-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
 
 .prow {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 46px;
-  padding: 0 8px;
+  min-height: 46px;
+  padding: 5px 8px;
   border-radius: 8px;
 }
 .prow:hover { background: var(--hover); }
-.prow .pn { font-size: 13.5px; }
-.prow .pv { font-size: 11.5px; color: var(--sub); }
-.prow .sp { margin-left: auto; }
-.prow.locked .pn { opacity: .55; }
+.prow .pnm { flex: 1 1 auto; min-width: 0; }
+.prow .pn {
+  font-size: 13.5px;
+  display: flex; align-items: center; gap: 7px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.prow .pmeta {
+  font-size: 11.5px; color: var(--sub); margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.prow .pmeta .pk { font-family: "Cascadia Mono", Consolas, monospace; }
 .prow .tag {
-  font-size: 10.5px; color: var(--sub); border: 1px solid var(--border);
-  border-radius: 6px; padding: 1px 6px; margin-left: 8px;
+  font-size: 10.5px; color: var(--sub);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 0 6px; flex: 0 0 auto; line-height: 16px;
+}
+.prow.locked .pn, .prow.locked .pmeta { opacity: .55; }
+.prow .pv {
+  font-size: 11.5px; color: var(--sub); flex: 0 0 auto; padding: 0 2px;
+  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 .row-sp { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .state { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sub); display: inline-block; }
+
+.dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--sub); display: inline-block;
+}
 .dot.on   { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
 .dot.busy { background: var(--warn); box-shadow: 0 0 0 3px rgba(240,168,80,.18); animation: blip .9s ease-in-out infinite; }
 @keyframes blip { 50% { opacity: .35; } }
+
 .port { font-size: 12.5px; color: var(--sub); }
-.url  { font-size: 12.5px; color: var(--sub); margin-bottom: 14px; word-break: break-all; }
-.btns { display: flex; gap: 10px; }
+.url  { font-size: 12.5px; color: var(--sub); margin-bottom: 14px; word-break: break-all; line-height: 1.5; }
+/* 间距不用 gap：中间那个 0 宽的「确认重启」会白占一个 gap，
+   导致「主按钮 → ⟳」和「⟳ → 🌐」间距不等（实测 10px vs 20px）。
+   改用相邻 margin，收起的元素自己把 margin-left 归零，三处间距永远是 10px。 */
+.btns { display: flex; }
+.btns > * + * { margin-left: 10px; }
 .hint { font-size: 11.5px; color: var(--sub); margin-top: 12px; line-height: 1.5; }
 
-.kv { display: grid; grid-template-columns: 96px 1fr; row-gap: 11px; column-gap: 10px; font-size: 12.5px; }
+.kv { display: grid; grid-template-columns: 92px 1fr; row-gap: 10px; column-gap: 10px; font-size: 12.5px; }
 .kv .k { color: var(--sub); }
-.kv .v { text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kv .v.mono { font-size: 12px; }
+.kv .v { text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kv .v.mono { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11.5px; }
+.kv .v.ellip { cursor: default; }
 
-/* ───────── 设置页 ───────── */
+/* ============================ 设置页 ============================ */
+
 .row { display: flex; align-items: center; gap: 12px; min-height: 34px; }
+.row + .row { margin-top: 6px; }
 .row.gap { margin-top: 10px; }
-.row .lab { flex: 0 0 92px; color: var(--sub); font-size: 12.5px; }
-.path { flex: 1 1 auto; color: var(--danger); font-size: 13px; word-break: break-all; }
+.row .lab { flex: 0 0 86px; color: var(--sub); font-size: 12.5px; }
+.path { flex: 1 1 auto; color: var(--danger); font-size: 12.5px; word-break: break-all; line-height: 1.45; }
 .path.ok { color: var(--text); }
-.st { font-size: 12px; color: var(--danger); margin: 6px 0 2px; }
+.st { font-size: 12px; color: var(--danger); margin: 6px 0 2px; line-height: 1.45; }
 .st.ok { color: var(--sub); }
 .hint2 { font-size: 11.5px; color: var(--sub); line-height: 1.5; }
 
 .srow {
   display: flex; align-items: center; gap: 16px;
-  padding: 12px 0;
-  border-top: 1px solid var(--border-soft);
+  padding: 11px 0;
 }
-.srow:first-of-type { border-top: 0; }
+.srow + .srow { border-top: 1px solid var(--border-soft); }
 .srow .t { font-size: 13.5px; }
 .srow .d { font-size: 11.5px; color: var(--sub); margin-top: 2px; line-height: 1.45; }
 .srow > div:first-child { flex: 1 1 auto; min-width: 0; }
 
 /* 开关 */
-.sw { flex: 0 0 auto; }
+.sw { flex: 0 0 auto; cursor: pointer; display: block; }
 .sw input { display: none; }
 .sw i {
   display: block; width: 46px; height: 26px; border-radius: 13px;
@@ -282,17 +557,19 @@ body {
   font: inherit; font-size: 12.5px; border-radius: 6px;
   padding: 6px 16px; cursor: pointer; transition: background .12s ease, color .12s ease;
 }
+.seg button:hover:not(.active) { color: var(--text); }
 .seg button.active { background: var(--accent); color: #fff; }
 
 .inp {
-  width: 130px; height: 30px; border-radius: 8px;
+  width: 120px; height: 30px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--panel2);
   color: var(--text); font: inherit; font-size: 13px; padding: 0 10px;
   outline: none;
 }
 .inp:focus { border-color: var(--accent); }
 
-/* ───────── 日志页 ───────── */
+/* ============================ 日志 ============================ */
+
 .log {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   background: var(--log-bg); border-radius: 10px;
@@ -302,18 +579,18 @@ body {
   white-space: pre-wrap; word-break: break-all;
   user-select: text;
 }
-.log::-webkit-scrollbar { width: 10px; }
-.log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
 
-/* ───────── 关于页 ───────── */
-.card.center .ava.big { width: 96px; height: 96px; border-radius: 22px; }
+/* ============================ 关于页 ============================ */
+
+.card.center .ava.big { width: 96px; height: 96px; border-radius: 22px; display: block; margin: 0 auto; }
 .card.center h1 { font-size: 20px; margin: 16px 0 4px; }
 .ver-line { font-size: 12px; color: var(--sub); }
 .about-txt { font-size: 13px; color: var(--text); line-height: 1.8; margin: 18px 0 0; }
 .about-sign { font-size: 11.5px; color: var(--accent-text); margin: 14px 0 0; font-weight: 600; }
 .about-links { display: flex; gap: 10px; justify-content: center; margin-top: 22px; }
 
-/* ───────── toast ───────── */
+/* ============================ toast ============================ */
+
 .toast {
   position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 14px);
   background: var(--panel2); color: var(--text);
@@ -324,17 +601,18 @@ body {
   transition: opacity .18s ease, transform .18s ease;
   max-width: 76%;
   text-align: center;
+  z-index: 60;
 }
-.toast.on { opacity: 1; transform: translate(-50%, 0); }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
 
-/* ───────── 自绘下拉（默认浏览器） ─────────
+/* ============================ 自绘下拉（默认浏览器） ============================
    原生 <select> 的展开列表是 Chromium 的顶层窗口：既不受面板边框裁剪，
    也没法改样式（用户看到的是系统白底菜单，还跑到面板外面去了）。
    所以整条下拉自己画：菜单是绝对定位的普通 div，跟着卡片走、样式统一。 */
 .pick { position: relative; flex: 1 1 auto; min-width: 0; }
 .pick .btn.ghost.wide { width: 100%; }
 .pick .caret {
-  width: 0; height: 0; margin-left: 8px;
+  width: 0; height: 0; margin-left: 8px; flex: 0 0 auto;
   border-left: 4px solid transparent; border-right: 4px solid transparent;
   border-top: 5px solid currentColor; opacity: .8;
 }
@@ -345,11 +623,12 @@ body {
   border-radius: 8px;
   padding: 5px;
   z-index: 40;
-  max-height: 208px;
+  max-height: 216px;
   overflow-y: auto;
   box-shadow: 0 10px 26px rgba(0,0,0,.34);
 }
 .pick .menu[hidden] { display: none; }
+.pick .menu.up { top: auto; bottom: calc(100% + 6px); }
 .pick .mi {
   display: block; width: 100%;
   text-align: left;

@@ -22,6 +22,10 @@ let editingPort = false;
 let armedRestart = false;
 let armedAt = 0;
 
+// 「停止」同理：点一下主按钮只把文字变成「确认停止」，再点一次才真发 stopNow。
+let armedStop = false;
+let armedStopAt = 0;
+
 // 信息卡横跨四份推送（state / paths / plugins / browsers），各自到达时就地重绘
 const cache = { state: null, paths: null, plugins: null, browsers: null, settings: null };
 
@@ -173,7 +177,8 @@ function renderState(s) {
     stateText.textContent = s.clean ? '运行中（纯净）' : '运行中';
     badge.textContent = s.clean ? '纯净运行' : '运行中';
     badge.className = 'badge ok';
-    urlText.textContent = s.url || ('http://127.0.0.1:' + port);
+    // 只显示 origin：s.url 是带 ?token=… 的完整地址，令牌等同于登录凭据，不该直接摊在界面上
+    urlText.textContent = originOf(s.url) || ('http://127.0.0.1:' + port);
     hint.textContent = '主按钮现在是「停止 DSH」；停止服务不会关闭面板，网页用旁边的地球按钮打开';
   } else if (s.failMsg) {
     stateText.textContent = '启动失败';
@@ -200,6 +205,8 @@ function renderState(s) {
 
   // 「确认重启」是网页内的二次确认（不弹 MessageBox）。离开运行态或超时 6 秒自动收起。
   if (armedRestart && (!running || Date.now() - armedAt > 6000)) { armedRestart = false; }
+  // 「确认停止」同理，5 秒不点就还原
+  if (armedStop && (!running || Date.now() - armedStopAt > 5000)) { armedStop = false; }
 
   btnRestart.hidden = true;
   btnRestart.classList.remove('collapse');
@@ -214,11 +221,18 @@ function renderState(s) {
     btnRestart.hidden = false;
     btnRestart.classList.toggle('collapse', armedRestart);
     btnConfirm.classList.toggle('on', armedRestart);
-    // 确认态：主按钮收成 46×46 的红色方块（只留停止图标），把中间的位置让给「确认重启」。
-    // 宽度的变化靠 .btn.big / .btn.compact / .confirm-restart 的 flex 过渡完成。
-    setMainButton(btnMain,
-      '停止 DSH',
-      armedRestart ? 'btn danger big compact' : 'btn danger big');
+
+    if (armedRestart) {
+      // 确认重启：主按钮收成 46×46 的红色方块（只留停止图标），把中间的位置让给「确认重启」。
+      // 宽度的变化靠 .btn.big / .btn.compact / .confirm-restart 的 flex 过渡完成。
+      setMainButton(btnMain, '停止 DSH', 'btn danger big compact');
+    } else if (armedStop) {
+      // 确认停止：主按钮原地把文字换成「确认停止」，加一圈红光晕提示「还差一下」
+      setMainButton(btnMain, '确认停止', 'btn danger big armed');
+      hint.textContent = '再点一次就停止服务；点别处或按 Esc 取消';
+    } else {
+      setMainButton(btnMain, '停止 DSH', 'btn danger big');
+    }
   } else if (s.failMsg) {
     setMainButton(btnMain, '✗ 启动失败，重试', 'btn primary big');
   } else {
@@ -235,17 +249,32 @@ $('btnMain').addEventListener('click', () => {
   if (!lastState) return;
 
   const btn = $('btnMain');
-  if (armedRestart) { armedRestart = false; }   // 点主按钮就放弃这次重启确认
 
-  // 运行中：主按钮是「停止 DSH」。具体确认由外壳的 MessageBox 负责，
-  // 所以这里只给一个乐观的忙碌态；2.5 秒还没变化（用户在确认框点了「否」）就回滚。
+  // 确认重启态下点主按钮 = 放弃这次重启确认（不顺手把服务停了）
+  if (armedRestart) {
+    armedRestart = false;
+    renderState(lastState);
+    return;
+  }
+
   if (lastState.running) {
+    // 第一次点：只把文字换成「确认停止」，不发任何命令
+    if (!armedStop) {
+      armedStop = true;
+      armedStopAt = Date.now();
+      renderState(lastState);
+      return;
+    }
+
+    // 第二次点：真停。确认已经在页面上做完了，走 stopNow，不弹 MessageBox。
+    armedStop = false;
     setMainButton(btn, '正在停止…', 'btn danger big busy');
     btn.disabled = true;
-    cmd('stop');
+    cmd('stopNow');
+    // 兜底：3 秒还没停（或外壳没回推）就按最新状态重绘一次
     setTimeout(() => {
       if (lastState && lastState.running && !lastState.starting) { renderState(lastState); }
-    }, 2500);
+    }, 3000);
     return;
   }
 
@@ -262,6 +291,7 @@ $('btnMain').addEventListener('click', () => {
 // 点一下 ⟳ 不直接重启：先把它自己展开成「确认重启」，再点才真重启。
 // 这样确认框长在按钮位置上（不弹 MessageBox，也不会被弹窗挡住页面）。
 $('btnRestart').addEventListener('click', () => {
+  armedStop = false;          // 两个确认态互斥，别让「确认停止」和「确认重启」同时挂着
   armedRestart = true;
   armedAt = Date.now();
   if (lastState) renderState(lastState);
@@ -489,12 +519,18 @@ document.addEventListener('click', (e) => {
     armedRestart = false;
     if (lastState) renderState(lastState);
   }
+  // 「确认停止」挂在主按钮上，点到别处就还原
+  if (armedStop && !e.target.closest('#btnMain')) {
+    armedStop = false;
+    if (lastState) renderState(lastState);
+  }
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   closeBrowserMenu();
-  if (armedRestart) {
+  if (armedRestart || armedStop) {
     armedRestart = false;
+    armedStop = false;
     if (lastState) renderState(lastState);
   }
 });

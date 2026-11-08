@@ -389,6 +389,10 @@ body.collapsed .nav .lbl { display: none; }
    高于 `.btn.danger` 的 (0,2,0)，不重写的话悬停会把红底换成 --hover 的灰底，白字直接糊成一片。
    悬停只做极轻的提亮，不做变暗。 */
 .btn.danger:hover:not(:disabled) { background: var(--danger); filter: brightness(1.06); }
+/* 「确认停止」态：还是那颗红按钮，外面套一圈光晕，提示「还差一下」。
+   hover 也重写 background，否则又会被 .btn:hover 的 --hover 灰底盖掉。 */
+.btn.big.armed { box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 30%, transparent); }
+.btn.big.armed:hover:not(:disabled) { background: var(--danger); filter: brightness(1.06); }
 /* 「关闭网页 DSH」：同样是 big 主按钮，但边框转红，一眼能看出现在是「关」不是「开」 */
 .btn.big.close { border-color: var(--danger); color: var(--danger); }
 .btn.big.close:hover:not(:disabled) { background: var(--danger-soft); }

@@ -301,10 +301,15 @@ internal sealed class UiBridge
                     break;
 
                 // ---- 以下为 M2 起的服务控制，此处先接上分发骨架 ----
+                // 注意：这是一张白名单，少列一个 cmd 就被下面的 default 静默吞掉。
+                // 「确认重启」曾经就是这样 —— 页面发了 restartNow，这里没列，点了毫无反应。
                 case "start":
                 case "stop":
+                case "stopNow":
                 case "restart":
+                case "restartNow":
                 case "openWeb":
+                case "closeWeb":
                 case "clean":
                 case "clearLog":
                     _svc.HandleCommand(name);

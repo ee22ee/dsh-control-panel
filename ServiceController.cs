@@ -257,6 +257,12 @@ internal sealed class ServiceController
         {
             case "start":   OpenDsh(); break;
             case "stop":    ConfirmStop(); break;
+            // 网页上点过「确认停止」才发这个 —— 二次确认已经在页面上做完了，别再弹 MessageBox。
+            // （托盘菜单仍然走上面的 "stop"，托盘没有网页 UI，那一边的确认框要留着）
+            case "stopNow":
+                Program.LogEvent("用户确认停止 DSH 服务（网页按钮）");
+                StopAsync();
+                break;
             case "restart": ConfirmRestart(); break;
             // 网页上先点了「确认重启」才发这个 —— 二次确认已经在页面上做完了，别再弹 MessageBox。
             // （托盘菜单仍然走上面的 "restart"，托盘没有网页 UI，那一边的确认框要留着）

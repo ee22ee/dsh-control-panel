@@ -26,10 +26,10 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
 
     <!-- 版本号：exe 属性、文件属性、关于页都从这里来 -->
-    <Version>2.0.0</Version>
-    <AssemblyVersion>2.0.0.0</AssemblyVersion>
-    <FileVersion>2.0.0.0</FileVersion>
-    <InformationalVersion>2.0.0</InformationalVersion>
+    <Version>2.1.0</Version>
+    <AssemblyVersion>2.1.0.0</AssemblyVersion>
+    <FileVersion>2.1.0.0</FileVersion>
+    <InformationalVersion>2.1.0</InformationalVersion>
     <Product>DSH 控制面板</Product>
     <Description>DeepSeek Harness 的 Windows 启动器与托盘控制台</Description>
 
